@@ -4,67 +4,88 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Metronome</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+<meta name="description" content="A precise browser metronome with tap tempo, subdivisions and a swinging pendulum.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#e7edf0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121d25" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{
-  --bg:#e7edf0; --panel:#f6f9fa; --ink:#18262e; --muted:#5d6f79; --line:#c5d1d7;
-  --brass:#a87414; --brass-ink:#ffffff; --accent-beat:#a87414; --beat:#18262e;
-  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  --bg:#e7edf0; --panel:#f6f9fa; --ink:#18262e; --muted:#566872; --line:#c0ccd2;
+  --brass:#a87414; --brass-ink:#ffffff; --pivot:#a87414;
+  --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#121d25; --panel:#1b2a34; --ink:#e8eff2; --muted:#93a6b0; --line:#2f4350;
-    --brass:#e0a93f; --brass-ink:#1a1405; --accent-beat:#e0a93f; --beat:#e8eff2; color-scheme:dark;
+  :root{
+    --bg:#121d25; --panel:#1b2a34; --ink:#e8eff2; --muted:#9bacb5; --line:#2f4350;
+    --brass:#e0a93f; --brass-ink:#1a1405; --pivot:#e0a93f; color-scheme:dark;
   }
 }
-:root[data-theme="dark"]{
-  --bg:#121d25; --panel:#1b2a34; --ink:#e8eff2; --muted:#93a6b0; --line:#2f4350;
-  --brass:#e0a93f; --brass-ink:#1a1405; --accent-beat:#e0a93f; --beat:#e8eff2; color-scheme:dark;
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+  min-height:100vh;min-height:100dvh;display:flex;justify-content:center;
+  -webkit-tap-highlight-color:transparent;overscroll-behavior:none;
 }
-html{scroll-padding-top:env(safe-area-inset-top,0px)}
-*,*::before,*::after{box-sizing:inherit}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:"Familjen Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;display:flex;justify-content:center}
-main{width:100%;max-width:440px;padding:20px 20px 32px;display:flex;flex-direction:column;gap:18px}
+main{
+  width:100%;max-width:440px;display:flex;flex-direction:column;gap:18px;
+  padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(32px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+}
 button,select,input{font:inherit;color:inherit}
 button{cursor:pointer}
+button,.step,.tap,.go{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 :focus-visible{outline:3px solid var(--brass);outline-offset:2px}
 
-.stage{background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:14px 12px 4px;position:relative}
-svg.pendulum{display:block;width:100%;height:auto;max-height:46vh;margin:0 auto}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:14px 12px 4px}
+svg.pendulum{display:block;width:100%;height:auto;max-height:44vh;max-height:44dvh;margin:0 auto}
 .body-fill{fill:var(--ink)}
 .arm{stroke:var(--brass);stroke-width:3;stroke-linecap:round}
 .weight{fill:var(--brass)}
 .tick{stroke:var(--panel);stroke-width:1.5;opacity:.5}
-#swing{transform-origin:100px 232px}
+.pivot{fill:var(--pivot)}
 
 .readout{display:flex;align-items:center;justify-content:center;gap:14px}
 .bpm{text-align:center;min-width:160px}
 .bpm output{display:block;font-size:92px;font-weight:700;line-height:.95;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .bpm span{display:block;color:var(--muted);font-size:17px;margin-top:4px}
-.step{width:56px;height:56px;border-radius:50%;border:1.5px solid var(--line);background:var(--panel);font-size:28px;line-height:1;display:grid;place-items:center;user-select:none;touch-action:manipulation}
+.step{width:56px;height:56px;border-radius:50%;border:1.5px solid var(--line);background:var(--panel);font-size:28px;line-height:1;display:grid;place-items:center}
 .step:active{background:var(--line)}
 
 input[type=range]{width:100%;accent-color:var(--brass);height:32px;margin:0}
 
 .beats{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;min-height:26px}
-.dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);background:transparent;transition:background .06s,transform .06s,border-color .06s}
-.dot.first{border-color:var(--accent-beat)}
-.dot.on{background:var(--beat);border-color:var(--beat);transform:scale(1.25)}
-.dot.first.on{background:var(--accent-beat);border-color:var(--accent-beat)}
+.dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);background:transparent;transition:background-color .06s,transform .06s,border-color .06s}
+.dot.first{border-color:var(--brass)}
+.dot.on{background:var(--ink);border-color:var(--ink);transform:scale(1.25)}
+.dot.first.on{background:var(--brass);border-color:var(--brass)}
 
-.go{height:68px;border-radius:34px;border:0;background:var(--brass);color:var(--brass-ink);font-size:22px;font-weight:700;touch-action:manipulation}
+.go{height:68px;border-radius:34px;border:0;background:var(--brass);color:var(--brass-ink);font-size:22px;font-weight:700}
 .go[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
 
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .field{display:flex;flex-direction:column;gap:6px;font-size:15px;color:var(--muted)}
 .field select,.tap{height:48px;border-radius:12px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px}
-.tap{font-weight:600;touch-action:manipulation}
-.tap:active{background:var(--line)}
-.vol{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:15px}
+.tap{font-weight:600}
+.tap:active,.tap.hit{background:var(--line)}
+.vol{display:flex;flex-direction:column;gap:6px;font-size:15px;color:var(--muted)}
+.vol input{height:48px}
 .hint{text-align:center;color:var(--muted);font-size:14px;margin:0}
+.note{text-align:center;color:var(--muted);font-size:14px;margin:0;min-height:1.2em}
+
+@media (max-height:640px) and (orientation:landscape){
+  main{max-width:760px;display:grid;grid-template-columns:1fr 1fr;align-items:start;gap:14px 24px}
+  .stage{grid-row:1 / span 5}
+  svg.pendulum{max-height:70vh;max-height:70dvh}
+  .readout .bpm output{font-size:64px}
+  .hint,.note{grid-column:2}
+}
+@media (prefers-reduced-motion:reduce){
+  .dot{transition:none}
+}
 </style>
 </head>
 <body>
@@ -75,25 +96,24 @@ input[type=range]{width:100%;accent-color:var(--brass);height:32px;margin:0}
         <line class="arm" x1="100" y1="232" x2="100" y2="34"/>
         <rect id="weight" class="weight" x="88" y="110" width="24" height="22" rx="4"/>
       </g>
-      <path class="body-fill" d="M52 256 L74 70 Q100 52 126 70 L148 256 Z" opacity=".0"/>
       <path class="body-fill" d="M40 258 L66 178 Q100 160 134 178 L160 258 Z"/>
       <line class="tick" x1="78" y1="205" x2="122" y2="205"/>
       <line class="tick" x1="74" y1="222" x2="126" y2="222"/>
-      <circle cx="100" cy="232" r="7" fill="#a87414"/>
+      <circle class="pivot" cx="100" cy="232" r="7"/>
     </svg>
   </section>
 
   <section class="readout" aria-label="Tempo">
-    <button class="step" id="minus" aria-label="Slower by 1 BPM">−</button>
+    <button class="step" id="minus" type="button" aria-label="Slower by 1 BPM">&minus;</button>
     <div class="bpm"><output id="bpmOut" aria-live="polite">100</output><span id="mark">Andante</span></div>
-    <button class="step" id="plus" aria-label="Faster by 1 BPM">+</button>
+    <button class="step" id="plus" type="button" aria-label="Faster by 1 BPM">+</button>
   </section>
 
   <input type="range" id="slider" min="30" max="240" value="100" aria-label="Tempo in beats per minute">
 
   <div class="beats" id="beats" aria-hidden="true"></div>
 
-  <button class="go" id="go" aria-pressed="false">Start</button>
+  <button class="go" id="go" type="button" aria-pressed="false">Start</button>
 
   <div class="row">
     <label class="field">Beats per bar
@@ -110,157 +130,308 @@ input[type=range]{width:100%;accent-color:var(--brass);height:32px;margin:0}
   </div>
 
   <div class="row">
-    <button class="tap" id="tap">Tap tempo</button>
+    <label class="field">Sound
+      <select id="sound">
+        <option value="click">Click</option>
+        <option value="wood">Wood block</option>
+        <option value="beep">Beep</option>
+      </select>
+    </label>
     <label class="vol">Volume
-      <input type="range" id="vol" min="0" max="100" value="80" aria-label="Volume">
+      <input type="range" id="vol" min="0" max="100" value="80">
     </label>
   </div>
 
-  <p class="hint">Space starts and stops. Arrow keys change tempo.</p>
+  <button class="tap" id="tap" type="button">Tap tempo</button>
+
+  <p class="note" id="note" role="status"></p>
+  <p class="hint">Space starts and stops. Up and Down change tempo (Shift for 10). T taps tempo.</p>
 </main>
 
 <script>
-(function(){
-  var bpm=100, beatsPerBar=4, subdiv=1, playing=false;
-  var ctx=null, master=null, timer=null, nextTime=0, beatIdx=0, subIdx=0;
-  var queue=[], last={time:0,idx:0,dur:0.6}, raf=null;
+(function () {
+  'use strict';
 
-  var $=function(id){return document.getElementById(id)};
-  var out=$('bpmOut'), mark=$('mark'), slider=$('slider'), go=$('go'), beatsEl=$('beats'),
-      swing=$('swing'), weight=$('weight');
+  var MIN_BPM = 30, MAX_BPM = 240, LOOKAHEAD = 0.12, TICK_MS = 25;
+  var STORE_KEY = 'metronome.v2';
 
-  var marks=[[40,'Grave'],[60,'Largo'],[66,'Larghetto'],[76,'Adagio'],[108,'Andante'],[120,'Moderato'],[156,'Allegro'],[176,'Vivace'],[200,'Presto'],[999,'Prestissimo']];
-  function markFor(b){for(var i=0;i<marks.length;i++){if(b<marks[i][0])return marks[i][1]}return 'Prestissimo'}
+  var state = { bpm: 100, bpb: 4, sub: 1, sound: 'click', vol: 80 };
+  var playing = false;
 
-  var bpb=$('bpb');
-  for(var n=1;n<=12;n++){var o=document.createElement('option');o.value=n;o.textContent=n;if(n===4)o.selected=true;bpb.appendChild(o)}
+  var $ = function (id) { return document.getElementById(id); };
+  var out = $('bpmOut'), mark = $('mark'), slider = $('slider'), go = $('go'),
+      beatsEl = $('beats'), swing = $('swing'), weight = $('weight'),
+      bpbSel = $('bpb'), subSel = $('sub'), soundSel = $('sound'), volEl = $('vol'),
+      noteEl = $('note');
 
-  function buildDots(){
-    beatsEl.innerHTML='';
-    for(var i=0;i<beatsPerBar;i++){var d=document.createElement('div');d.className='dot'+(i===0?' first':'');beatsEl.appendChild(d)}
-  }
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function setBpm(v){
-    bpm=Math.max(30,Math.min(240,Math.round(v)));
-    out.textContent=bpm; slider.value=bpm; mark.textContent=markFor(bpm);
-    // Weight rides higher on the arm at slow tempos, as on a real metronome
-    var y=48+(bpm-30)/210*130;
-    weight.setAttribute('y',y.toFixed(1));
-  }
-
-  function click(time,kind){
-    var osc=ctx.createOscillator(), g=ctx.createGain();
-    var f=kind==='accent'?1650:kind==='beat'?1100:760;
-    var peak=kind==='sub'?0.35:1;
-    osc.type='square'; osc.frequency.value=f;
-    g.gain.setValueAtTime(0.0001,time);
-    g.gain.exponentialRampToValueAtTime(peak,time+0.002);
-    g.gain.exponentialRampToValueAtTime(0.0001,time+0.05);
-    osc.connect(g); g.connect(master);
-    osc.start(time); osc.stop(time+0.06);
-  }
-
-  function schedule(){
-    while(nextTime<ctx.currentTime+0.12){
-      var dur=60/bpm;
-      if(subIdx===0){
-        click(nextTime, beatIdx===0?'accent':'beat');
-        queue.push({time:nextTime,idx:beatIdx,dur:dur});
-      }else{
-        click(nextTime,'sub');
+  /* ---------- persistence (can throw in private windows / blocked storage) ---------- */
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      if (s && typeof s === 'object') {
+        if (isFinite(s.bpm)) state.bpm = clamp(Math.round(s.bpm), MIN_BPM, MAX_BPM);
+        if (s.bpb >= 1 && s.bpb <= 12) state.bpb = s.bpb | 0;
+        if (s.sub >= 1 && s.sub <= 4) state.sub = s.sub | 0;
+        if (s.sound === 'click' || s.sound === 'wood' || s.sound === 'beep') state.sound = s.sound;
+        if (s.vol >= 0 && s.vol <= 100) state.vol = s.vol | 0;
       }
-      nextTime+=dur/subdiv;
-      subIdx++;
-      if(subIdx>=subdiv){subIdx=0;beatIdx=(beatIdx+1)%beatsPerBar}
+    } catch (e) {}
+  }
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  /* ---------- tempo marking ---------- */
+  var marks = [[40,'Grave'],[60,'Largo'],[66,'Larghetto'],[76,'Adagio'],[108,'Andante'],
+               [120,'Moderato'],[156,'Allegro'],[176,'Vivace'],[200,'Presto']];
+  function markFor(b) {
+    for (var i = 0; i < marks.length; i++) if (b < marks[i][0]) return marks[i][1];
+    return 'Prestissimo';
+  }
+
+  /* ---------- UI helpers ---------- */
+  for (var n = 1; n <= 12; n++) {
+    var o = document.createElement('option'); o.value = n; o.textContent = n; bpbSel.appendChild(o);
+  }
+  function buildDots() {
+    beatsEl.innerHTML = '';
+    for (var i = 0; i < state.bpb; i++) {
+      var d = document.createElement('div');
+      d.className = 'dot' + (i === 0 ? ' first' : '');
+      beatsEl.appendChild(d);
     }
   }
+  function setBpm(v) {
+    state.bpm = clamp(Math.round(v), MIN_BPM, MAX_BPM);
+    out.textContent = state.bpm;
+    slider.value = state.bpm;
+    mark.textContent = markFor(state.bpm);
+    // The weight rides higher on the arm at slow tempos, like a real metronome.
+    weight.setAttribute('y', (48 + (state.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM) * 130).toFixed(1));
+    save();
+  }
+  function say(msg) { noteEl.textContent = msg || ''; }
 
-  function draw(){
-    if(!ctx){return}
-    var now=ctx.currentTime;
-    while(queue.length&&queue[0].time<=now){
-      last=queue.shift();
-      var dots=beatsEl.children;
-      for(var i=0;i<dots.length;i++)dots[i].classList.toggle('on',i===last.idx);
+  /* ---------- audio ---------- */
+  var ctx = null, master = null;
+
+  function ensureAudio() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { say('This browser does not support Web Audio.'); return false; }
+      try { ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { ctx = new AC(); }
+      master = ctx.createGain();
+      master.connect(ctx.destination);
+      applyVolume();
+      // Chrome can suspend the context (autoplay policy, device change). Try to recover while playing.
+      ctx.onstatechange = function () {
+        if (playing && ctx.state !== 'running') ctx.resume().catch(function () {});
+      };
     }
-    var frac=Math.min(1,Math.max(0,(now-last.time)/last.dur));
-    // The arm reaches an extreme on every click and alternates side each beat
-    var side=(last.count||0)%2===0?1:-1;
-    var angle=22*side*Math.cos(Math.PI*frac);
-    swing.style.transform='rotate('+angle.toFixed(2)+'deg)';
-    raf=requestAnimationFrame(draw);
+    return true;
+  }
+  function applyVolume() {
+    if (master) { var v = state.vol / 100; master.gain.value = v * v; }
   }
 
-  var beatCounter=0;
-  var origPush=queue.push;
-
-  function start(){
-    if(!ctx){
-      var AC=window.AudioContext||window.webkitAudioContext;
-      ctx=new AC(); master=ctx.createGain(); master.connect(ctx.destination);
-      setVol();
-    }
-    if(ctx.state==='suspended')ctx.resume();
-    playing=true; beatIdx=0; subIdx=0; beatCounter=0; queue=[];
-    nextTime=ctx.currentTime+0.06;
-    last={time:nextTime,idx:0,dur:60/bpm,count:0};
-    go.textContent='Stop'; go.setAttribute('aria-pressed','true');
-    timer=setInterval(schedule,25); schedule();
-    cancelAnimationFrame(raf); draw();
-  }
-
-  function stop(){
-    playing=false; clearInterval(timer); cancelAnimationFrame(raf);
-    queue=[]; go.textContent='Start'; go.setAttribute('aria-pressed','false');
-    swing.style.transform='rotate(0deg)';
-    var dots=beatsEl.children;
-    for(var i=0;i<dots.length;i++)dots[i].classList.remove('on');
-  }
-
-  // Track absolute beat count so the swing direction stays consistent
-  var _schedule=schedule;
-  schedule=function(){
-    var before=queue.length;
-    _schedule();
-    for(var i=before;i<queue.length;i++){queue[i].count=beatCounter++}
+  var VOICES = {
+    click: { type: 'square',   f: { accent: 1650, beat: 1100, sub: 760 }, len: 0.05, drop: 1 },
+    wood:  { type: 'triangle', f: { accent: 1000, beat: 760,  sub: 560 }, len: 0.08, drop: 0.55 },
+    beep:  { type: 'sine',     f: { accent: 1000, beat: 800,  sub: 600 }, len: 0.10, drop: 1 }
   };
-  var _shift=Array.prototype.shift;
-
-  function setVol(){
-    if(master){var v=$('vol').value/100;master.gain.value=v*v}
+  function click(time, kind) {
+    var v = VOICES[state.sound] || VOICES.click;
+    var osc = ctx.createOscillator(), g = ctx.createGain();
+    var peak = kind === 'sub' ? 0.35 : 1;
+    osc.type = v.type;
+    osc.frequency.setValueAtTime(v.f[kind], time);
+    if (v.drop !== 1) osc.frequency.exponentialRampToValueAtTime(v.f[kind] * v.drop, time + v.len);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(peak, time + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + v.len);
+    osc.connect(g); g.connect(master);
+    osc.start(time); osc.stop(time + v.len + 0.02);
   }
 
-  function toggle(){playing?stop():start()}
+  /* ---------- scheduler ----------
+     A Web Worker drives the tick. Timers in the main thread get throttled in background
+     Chrome tabs (to once per second, then once per minute), which makes a metronome stutter.
+     Worker timers are not throttled the same way, so the clicks stay on time. */
+  var workerSrc = 'var t=null;onmessage=function(e){clearInterval(t);t=null;' +
+                  'if(e.data==="start"){t=setInterval(function(){postMessage(0)},' + TICK_MS + ')}};';
+  var ticker = (function () {
+    var worker = null, fallback = null, cb = null;
+    try {
+      worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: 'text/javascript' })));
+      worker.onmessage = function () { if (cb) cb(); };
+      worker.onerror = function () { worker = null; if (cb && playing) startFallback(); };
+    } catch (e) { worker = null; }
+    function startFallback() { stopFallback(); fallback = setInterval(function () { if (cb) cb(); }, TICK_MS); }
+    function stopFallback() { if (fallback) { clearInterval(fallback); fallback = null; } }
+    return {
+      start: function (fn) { cb = fn; if (worker) worker.postMessage('start'); else startFallback(); },
+      stop: function () { cb = null; if (worker) worker.postMessage('stop'); stopFallback(); }
+    };
+  })();
 
-  go.addEventListener('click',toggle);
-  $('minus').addEventListener('click',function(){setBpm(bpm-1)});
-  $('plus').addEventListener('click',function(){setBpm(bpm+1)});
-  slider.addEventListener('input',function(){setBpm(+slider.value)});
-  $('vol').addEventListener('input',setVol);
-  bpb.addEventListener('change',function(){
-    beatsPerBar=+bpb.value; buildDots(); beatIdx=0; subIdx=0;
-  });
-  $('sub').addEventListener('change',function(){subdiv=+$('sub').value; subIdx=0});
+  var nextTime = 0, beatIdx = 0, subIdx = 0, beatCount = 0, curSub = 1, curBpb = 4;
+  var queue = [], last = { time: 0, idx: 0, dur: 0.6, n: 0 }, raf = null;
 
-  var taps=[];
-  $('tap').addEventListener('click',function(){
-    var t=performance.now();
-    if(taps.length&&t-taps[taps.length-1]>2000)taps=[];
-    taps.push(t); if(taps.length>6)taps.shift();
-    if(taps.length>=2){
-      var sum=0;for(var i=1;i<taps.length;i++)sum+=taps[i]-taps[i-1];
-      setBpm(60000/(sum/(taps.length-1)));
+  function schedule() {
+    if (!ctx) return;
+    while (nextTime < ctx.currentTime + LOOKAHEAD) {
+      var dur = 60 / state.bpm;
+      if (subIdx === 0) {
+        // Bar length and subdivision changes take effect on the next beat so the grid never wobbles.
+        curSub = state.sub; curBpb = state.bpb;
+        if (beatIdx >= curBpb) beatIdx = 0;
+        click(nextTime, beatIdx === 0 ? 'accent' : 'beat');
+        queue.push({ time: nextTime, idx: beatIdx, dur: dur, n: beatCount++ });
+      } else {
+        click(nextTime, 'sub');
+      }
+      nextTime += dur / curSub;
+      subIdx++;
+      if (subIdx >= curSub) { subIdx = 0; beatIdx = (beatIdx + 1) % curBpb; }
+    }
+  }
+
+  /* ---------- visuals (follow the audio clock, not wall time) ---------- */
+  function setAngle(a) { swing.setAttribute('transform', 'rotate(' + a.toFixed(2) + ' 100 232)'); }
+
+  function draw() {
+    if (!playing || !ctx) return;
+    var now = ctx.currentTime - (ctx.outputLatency || 0); // line the picture up with what you hear
+    while (queue.length && queue[0].time <= now) {
+      last = queue.shift();
+      var dots = beatsEl.children;
+      for (var i = 0; i < dots.length; i++) dots[i].classList.toggle('on', i === last.idx);
+    }
+    if (reduceMotion) {
+      setAngle(0);
+    } else {
+      var frac = clamp((now - last.time) / last.dur, 0, 1);
+      var side = last.n % 2 === 0 ? 1 : -1;     // the arm sits at an extreme on every click
+      setAngle(22 * side * Math.cos(Math.PI * frac));
+    }
+    raf = requestAnimationFrame(draw);
+  }
+
+  /* ---------- keep the screen awake while playing (Chrome on Android / desktop) ---------- */
+  var wakeLock = null;
+  function lockScreen() {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+    navigator.wakeLock.request('screen').then(function (l) {
+      wakeLock = l;
+      l.addEventListener('release', function () { wakeLock = null; });
+    }).catch(function () {});
+  }
+  function unlockScreen() {
+    if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (playing && document.visibilityState === 'visible') {
+      lockScreen();
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(function () {});
+      cancelAnimationFrame(raf); raf = requestAnimationFrame(draw);
     }
   });
 
-  document.addEventListener('keydown',function(e){
-    var tag=(e.target.tagName||'').toLowerCase();
-    if(e.code==='Space'&&tag!=='button'&&tag!=='select'){e.preventDefault();toggle()}
-    else if(e.key==='ArrowUp'&&tag!=='input'&&tag!=='select'){e.preventDefault();setBpm(bpm+(e.shiftKey?10:1))}
-    else if(e.key==='ArrowDown'&&tag!=='input'&&tag!=='select'){e.preventDefault();setBpm(bpm-(e.shiftKey?10:1))}
+  /* ---------- transport ---------- */
+  function start() {
+    if (!ensureAudio()) return;
+    if (ctx.state !== 'running') ctx.resume().catch(function () {});
+    playing = true;
+    beatIdx = 0; subIdx = 0; beatCount = 0; queue = [];
+    curSub = state.sub; curBpb = state.bpb;
+    nextTime = ctx.currentTime + 0.06;
+    last = { time: nextTime, idx: 0, dur: 60 / state.bpm, n: 0 };
+    go.textContent = 'Stop'; go.setAttribute('aria-pressed', 'true');
+    say('');
+    ticker.start(schedule); schedule();
+    lockScreen();
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(draw);
+  }
+
+  function stop() {
+    playing = false;
+    ticker.stop(); cancelAnimationFrame(raf); unlockScreen();
+    queue = [];
+    go.textContent = 'Start'; go.setAttribute('aria-pressed', 'false');
+    setAngle(0);
+    var dots = beatsEl.children;
+    for (var i = 0; i < dots.length; i++) dots[i].classList.remove('on');
+  }
+  function toggle() { playing ? stop() : start(); }
+
+  /* ---------- controls ---------- */
+  go.addEventListener('click', toggle);
+
+  // +/- buttons: tap to nudge, hold to repeat. Keyboard activation (detail 0) is handled via click.
+  function nudger(btn, dir) {
+    var hold = null, rep = null;
+    function clear() { clearTimeout(hold); clearInterval(rep); hold = rep = null; }
+    btn.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      setBpm(state.bpm + dir);
+      clear();
+      hold = setTimeout(function () { rep = setInterval(function () { setBpm(state.bpm + dir); }, 70); }, 400);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel', 'blur'].forEach(function (t) { btn.addEventListener(t, clear); });
+    btn.addEventListener('click', function (e) { if (e.detail === 0) setBpm(state.bpm + dir); });
+    btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  }
+  nudger($('minus'), -1);
+  nudger($('plus'), 1);
+
+  slider.addEventListener('input', function () { setBpm(+slider.value); });
+  volEl.addEventListener('input', function () { state.vol = +volEl.value; applyVolume(); save(); });
+  bpbSel.addEventListener('change', function () { state.bpb = +bpbSel.value; buildDots(); save(); });
+  subSel.addEventListener('change', function () { state.sub = +subSel.value; save(); });
+  soundSel.addEventListener('change', function () { state.sound = soundSel.value; save(); });
+
+  var taps = [];
+  function tapTempo() {
+    var t = performance.now();
+    if (taps.length && t - taps[taps.length - 1] > 2000) taps = [];
+    taps.push(t); if (taps.length > 6) taps.shift();
+    if (taps.length >= 2) {
+      var sum = 0;
+      for (var i = 1; i < taps.length; i++) sum += taps[i] - taps[i - 1];
+      setBpm(60000 / (sum / (taps.length - 1)));
+    }
+    var b = $('tap'); b.classList.add('hit'); setTimeout(function () { b.classList.remove('hit'); }, 90);
+  }
+  $('tap').addEventListener('pointerdown', function (e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    tapTempo();
+  });
+  $('tap').addEventListener('click', function (e) { if (e.detail === 0) tapTempo(); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = (e.target.tagName || '').toLowerCase();
+    var typing = tag === 'input' || tag === 'select' || tag === 'textarea';
+    if (e.code === 'Space' && tag !== 'button' && !typing) { e.preventDefault(); toggle(); }
+    else if (e.key === 'ArrowUp' && !typing) { e.preventDefault(); setBpm(state.bpm + (e.shiftKey ? 10 : 1)); }
+    else if (e.key === 'ArrowDown' && !typing) { e.preventDefault(); setBpm(state.bpm - (e.shiftKey ? 10 : 1)); }
+    else if ((e.key === 't' || e.key === 'T') && !typing && tag !== 'button') { tapTempo(); }
   });
 
-  buildDots(); setBpm(100);
+  /* ---------- init ---------- */
+  load();
+  bpbSel.value = state.bpb; subSel.value = state.sub; soundSel.value = state.sound; volEl.value = state.vol;
+  buildDots(); setBpm(state.bpm); setAngle(0);
+
+  // Offline support and installability (service workers need http(s) or localhost, not file://).
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
 })();
 </script>
 </body>
