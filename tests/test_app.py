@@ -26,7 +26,8 @@ HOOK = """
   var ids = new WeakMap(), n = 0;
   var start = AudioBufferSourceNode.prototype.start;
   AudioBufferSourceNode.prototype.start = function (t) {
-    var b = this.buffer; if (!ids.has(b)) ids.set(b, ++n);
+    var b = this.buffer; if (b && b.length <= 1) return start.apply(this, arguments);   // silent unlock sample
+    if (!ids.has(b)) ids.set(b, ++n);
     window.__clicks.push({ t: t || 0, rate: this.playbackRate.value, buf: ids.get(b) });
     return start.apply(this, arguments);
   };
@@ -259,17 +260,29 @@ def test_persistence_and_migration(env):
 
 
 def test_dial_and_controls(env):
-    page = env.page(cfg())
+    import math
+    page = env.page(cfg(bpm=100))
     box = page.locator("#dial").bounding_box()
-    cx, cy, r = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, box["width"] / 2
-    page.mouse.move(cx, cy - r * 0.8); page.mouse.down()
-    near(int(page.inner_text("#bpmOut")), 160, 2, "dial straight up")
-    page.mouse.move(cx + r * 0.8, cy); page.mouse.up()
-    near(int(page.inner_text("#bpmOut")), 253, 3, "dial pointing right")
-    page.mouse.move(cx, cy); page.mouse.down(); page.mouse.up()
-    near(int(page.inner_text("#bpmOut")), 253, 3, "touches in the middle are ignored")
-    page.keyboard.press("ArrowUp"); near(int(page.inner_text("#bpmOut")), 254, 3)
-    page.keyboard.press("Shift+ArrowDown"); near(int(page.inner_text("#bpmOut")), 244, 3)
+    cx, cy, r = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, box["width"] / 2 * 0.8
+    pt = lambda a: (cx + r * math.sin(math.radians(a)), cy - r * math.cos(math.radians(a)))
+    knob = -135 + (100 - 20) / 280 * 270                       # where the knob sits at 100 BPM
+    bpm = lambda: int(page.inner_text("#bpmOut"))
+    page.mouse.click(*pt(120))                                  # a plain tap on the ring changes nothing
+    assert bpm() == 100, "tapping the ring must not jump the tempo"
+    page.mouse.click(*pt(-100)); assert bpm() == 100
+    page.mouse.move(*pt(knob)); page.mouse.down()
+    assert bpm() == 100, "grabbing the ring does not change tempo"
+    for a in (-30, 0): page.mouse.move(*pt(a))
+    near(bpm(), 160, 2, "dragged from the knob to straight up")
+    for a in (45, 90): page.mouse.move(*pt(a))
+    near(bpm(), 253, 3, "dragged on to the right")
+    for a in (60, 20, -40): page.mouse.move(*pt(a))
+    near(bpm(), 100 + (-40 - knob) * 280 / 270, 3, "and back again")
+    page.mouse.up()
+    before = bpm()
+    page.mouse.click(cx, cy); assert bpm() == before, "touches in the middle are ignored"
+    page.keyboard.press("ArrowUp"); assert bpm() == before + 1
+    page.keyboard.press("Shift+ArrowDown"); assert bpm() == before - 9
     page.keyboard.press("Space"); page.wait_for_timeout(200)
     assert page.inner_text("#go") == "Stop"
     page.keyboard.press("Space"); assert page.inner_text("#go") == "Start"
@@ -521,42 +534,69 @@ def test_touch_swipe_on_a_phone(env):
     page.click("#go")
 
 
-def test_swipe_while_audio_locked_asks_for_a_tap_then_runs(env):
+def test_swipe_while_audio_locked_shows_gate_that_swallows_the_tap(env):
     page = env.page(cfg(bpm=240), init=(LOCKED_AUDIO,))
-    swipe(page, 90)                                     # first thing the user does is a swipe, as on iPhone
-    page.wait_for_timeout(700)
-    assert page.inner_text("#go") == "Stop"
-    assert page.evaluate("window.__ctx.state") == "suspended", "swipe cannot unlock audio"
-    assert page.locator("#unlock").is_visible(), "the user is told to tap"
-    a1 = arm_angle(page); t1 = page.evaluate("window.__ctx.currentTime"); page.wait_for_timeout(300)
-    assert page.evaluate("window.__ctx.currentTime") == t1 and arm_angle(page) == a1, "frozen until unlocked"
-    page.evaluate("window.__allowResume = true")        # the OS accepts a real tap
-    page.mouse.click(8, 500)                            # tap on empty space
+    swipe(page, -90)                                    # first thing the user does is a swipe, as on iPhone
+    page.wait_for_timeout(500)
+    assert page.locator("#gate").is_visible(), "told to tap"
+    assert page.inner_text("#go") == "Start", "does not pretend to be playing while audio is locked"
+    box = page.locator("#dial").bounding_box()          # tap right on the tempo dial, like the screenshot
+    tap_at = (box["x"] + box["width"] * 0.2, box["y"] + box["height"] * 0.75)
+    page.mouse.click(*tap_at)                           # the OS refuses to unlock this time
     page.wait_for_timeout(900)
+    assert page.inner_text("#bpmOut") == "240", "the tap was swallowed by the gate, tempo untouched"
+    assert page.locator("#gate").is_visible() and "still blocked" in page.inner_text("#gateText"), page.inner_text("#gate")
+    assert "locked" in page.inner_text("#gateSub") or "suspended" in page.inner_text("#gateSub")
+    page.evaluate("window.__allowResume = true")        # now the OS accepts a real tap
+    page.mouse.click(*tap_at)
+    page.wait_for_timeout(700)
+    assert not page.locator("#gate").is_visible(), "gate closes"
+    assert page.inner_text("#bpmOut") == "240", "tempo still untouched"
+    assert page.inner_text("#go") == "Stop", "starts after the tap"
     assert page.evaluate("window.__ctx.state") == "running"
-    assert not page.locator("#unlock").is_visible(), "prompt disappears"
-    assert page.evaluate("window.__ctx.currentTime") > t1 + 0.3, "audio clock runs"
     seen = {arm_angle(page)}
     for _ in range(8):
         page.wait_for_timeout(60); seen.add(arm_angle(page))
     assert len(seen) > 4, "pendulum is swinging"
-    assert page.inner_text("#go") == "Stop"
-    ts = [x["t"] for x in clicks(page) if x["rate"] == 1.3 or x["rate"] == 1]
-    assert len(ts) > 4
     page.click("#go")
-    assert not page.locator("#unlock").is_visible()
+    swipe(page, 90)                                     # audio is unlocked now: no gate any more
+    page.wait_for_timeout(400)
+    assert page.inner_text("#go") == "Stop" and not page.locator("#gate").is_visible()
+    page.click("#go")
+
+
+def test_gate_remembers_swipe_direction_and_escape_cancels(env):
+    page = env.page(cfg(bpm=100), init=(LOCKED_AUDIO,))
+    swipe(page, -90); page.wait_for_timeout(500)
+    page.evaluate("window.__allowResume = true")
+    page.mouse.click(200, 400); page.wait_for_timeout(350)
+    assert page.inner_text("#go") == "Stop" and arm_angle(page) < -5, "first swing on the side that was swiped"
+    page.click("#go")
+    page2 = env.page(cfg(bpm=100), init=(LOCKED_AUDIO,))
+    swipe(page2, 90); page2.wait_for_timeout(500)
+    assert page2.locator("#gate").is_visible()
+    page2.keyboard.press("Escape")
+    assert not page2.locator("#gate").is_visible() and page2.inner_text("#go") == "Start"
 
 
 def test_any_tap_unlocks_audio_before_start(env):
     page = env.page(cfg(bpm=240), init=(LOCKED_AUDIO,))
-    assert not page.evaluate("!!window.__ctx"), "nothing created before any interaction"
+    assert not page.evaluate("!!window.__ctx"), "no audio context before any interaction"
     page.evaluate("window.__allowResume = true")
     page.mouse.click(8, 500)
     page.wait_for_timeout(300)
     assert page.evaluate("window.__ctx.state") == "running", "a tap anywhere unlocks audio"
     swipe(page, 90)
     page.wait_for_timeout(500)
-    assert page.inner_text("#go") == "Stop" and not page.locator("#unlock").is_visible(), "later swipe starts cleanly"
+    assert page.inner_text("#go") == "Stop" and not page.locator("#gate").is_visible(), "later swipe starts cleanly"
+    page.click("#go")
+
+
+def test_start_button_works_even_if_audio_was_locked(env):
+    page = env.page(cfg(bpm=240), init=(LOCKED_AUDIO,))
+    page.evaluate("window.__allowResume = true")
+    page.click("#go"); page.wait_for_timeout(600)
+    assert page.evaluate("window.__ctx.state") == "running" and page.inner_text("#go") == "Stop"
     page.click("#go")
 
 
@@ -570,7 +610,8 @@ ORDER = [
     test_swipe_pendulum_to_start, test_swipe_left_starts_on_the_left, test_swipe_ignored_while_playing,
     test_time_signature_badge, test_badge_change_while_playing_and_keys_blocked,
     test_touch_swipe_on_a_phone,
-    test_swipe_while_audio_locked_asks_for_a_tap_then_runs, test_any_tap_unlocks_audio_before_start,
+    test_swipe_while_audio_locked_shows_gate_that_swallows_the_tap, test_gate_remembers_swipe_direction_and_escape_cancels,
+    test_any_tap_unlocks_audio_before_start, test_start_button_works_even_if_audio_was_locked,
 ]
 
 

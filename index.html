@@ -44,7 +44,10 @@ button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 .stage{position:relative;touch-action:pan-y;cursor:grab;background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:12px 12px 2px}
 .sig-badge{position:absolute;top:10px;left:12px;z-index:1;min-height:40px;padding:0 12px;border:0;border-radius:12px;background:none;color:var(--muted);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer}
 .sig-badge:active{background:var(--line)}
-.unlock{position:absolute;top:14px;right:14px;z-index:1;background:var(--brass);color:var(--brass-ink);border-radius:999px;padding:7px 14px;font-size:14px;font-weight:600;pointer-events:none}
+.gate{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.4);cursor:pointer;touch-action:manipulation}
+.gate[hidden]{display:none}
+.gate-card{background:var(--brass);color:var(--brass-ink);border-radius:24px;padding:24px 28px;font-size:22px;font-weight:700;text-align:center;max-width:320px;line-height:1.25}
+.gate-card small{display:block;font-weight:500;font-size:15px;margin-top:8px}
 .sigpresets{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
 .btn[aria-pressed="true"]{background:var(--brass);color:var(--brass-ink);border-color:var(--brass)}
 svg.pendulum{display:block;width:100%;height:auto;max-height:30vh;max-height:30dvh;margin:0 auto}
@@ -152,7 +155,6 @@ dialog .help{margin:10px 0 0}
 <main id="app">
   <section class="stage" id="stageCard">
     <button class="sig-badge" id="sigBadge" type="button" aria-label="Time signature 4/4. Press to change.">4/4</button>
-    <div class="unlock" id="unlock" role="status" hidden>Tap anywhere to turn sound on</div>
     <svg class="pendulum" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <g id="arm">
         <line class="arm" x1="100" y1="232" x2="100" y2="34"/>
@@ -314,6 +316,10 @@ dialog .help{margin:10px 0 0}
 
   <p class="hint">Swipe the pendulum to start. Space start or stop. Up and Down change tempo (Shift for 10). T taps tempo. S opens stage mode.</p>
 </main>
+
+<div class="gate" id="gate" role="dialog" aria-modal="true" aria-label="Turn sound on" hidden>
+  <div class="gate-card"><span id="gateText">Tap to turn sound on</span><small id="gateSub">Then the metronome starts.</small></div>
+</div>
 
 <div class="stageview" id="stageView" role="dialog" aria-modal="true" aria-label="Stage mode">
   <button class="st-exit" id="stExit" type="button">Exit</button>
@@ -585,9 +591,7 @@ dialog .help{margin:10px 0 0}
   // real tap (a swipe does not count). Also, Web Audio is muted by the silent switch unless the page asks
   // for "playback" audio, so we request that, with a silent looping <audio> as the older-iOS fallback.
   var IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  var keepAlive = null, unlockEl = $('unlock');
-
-  function showUnlock(on) { unlockEl.hidden = !on; }
+  var keepAlive = null;
 
   function playKeepAlive() {
     if (!IOS) return;
@@ -620,8 +624,7 @@ dialog .help{margin:10px 0 0}
       buildBuffers();
       // The browser can suspend the context (autoplay policy, phone call, device change).
       ctx.onstatechange = function () {
-        if (ctx.state === 'running') showUnlock(false);
-        else if (playing) ctx.resume().catch(noop);
+        if (ctx.state !== 'running' && playing) ctx.resume().catch(noop);
       };
     }
     if (ctx.state !== 'running') ctx.resume().catch(noop);
@@ -632,11 +635,56 @@ dialog .help{margin:10px 0 0}
   function unlockAudio() {
     if (!ctx) { if (!ensureAudio()) return; }
     else if (ctx.state !== 'running') ctx.resume().catch(noop);
+    try {                                                       // the classic iOS unlock: play one silent sample
+      var sb = ctx.createBuffer(1, 1, 22050), ss = ctx.createBufferSource();
+      ss.buffer = sb; ss.connect(ctx.destination); ss.start(0);
+    } catch (e) {}
     if (playing) playKeepAlive();
   }
   ['touchend', 'pointerup', 'click', 'keydown'].forEach(function (t) {
     document.addEventListener(t, unlockAudio, { capture: true, passive: true });
   });
+
+  /* ---------- audio gate ----------
+     A swipe cannot unlock audio on iPhone, and a context created outside a tap can stay locked. So when a
+     swipe finds audio locked, a full-screen gate swallows the next tap (nothing underneath is touched), builds
+     a fresh audio context inside that tap, and then starts the metronome on the side that was swiped. */
+  var gate = $('gate'), gateDir = 0;
+  function audioReady() { return !!ctx && ctx.state === 'running'; }
+  function resetAudio() {
+    try { if (ctx) ctx.close(); } catch (e) {}
+    ctx = null; master = null; buffers = null;
+  }
+  function showGate(dir) {
+    gateDir = dir;
+    $('gateText').textContent = 'Tap to turn sound on';
+    $('gateSub').textContent = 'Then the metronome starts.';
+    gate.hidden = false;
+  }
+  function hideGate() { gate.hidden = true; }
+  gate.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (ctx && ctx.state !== 'running') resetAudio();           // start fresh, inside this tap
+    unlockAudio();
+    var dir = gateDir, tries = 0;
+    (function check() {
+      if (audioReady()) { hideGate(); start(dir); return; }
+      if (++tries < 10) { setTimeout(check, 60); return; }
+      $('gateText').textContent = 'Sound is still blocked';
+      $('gateSub').textContent = 'The browser reports audio as "' + (ctx ? ctx.state : 'unavailable') +
+        '". Check the volume and Silent mode, then tap again.';
+    })();
+  });
+  function requestStart(dir) {
+    if (playing) return;
+    ensureAudio();
+    var tries = 0;
+    (function check() {
+      if (audioReady()) { start(dir); return; }
+      if (++tries < 6) { setTimeout(check, 25); return; }
+      setAngle(0); showGate(dir);
+    })();
+  }
 
   /* ---------- timer: a Web Worker, because Chrome throttles main-thread timers in hidden tabs ---------- */
   var workerSrc = 'var t=null;onmessage=function(e){clearInterval(t);t=null;' +
@@ -826,10 +874,6 @@ dialog .help{margin:10px 0 0}
     last = { time: nextTime, idx: 0, dur: 60 / state.bpm, n: 0, lvl: 2, muted: false, count: state.countIn > 0, bar: -state.countIn };
     renderTransport(); say('');
     playKeepAlive();
-    // A swipe cannot unlock audio on iPhone. If it is still locked, ask for one tap and carry on from there.
-    if (ctx.state !== 'running') {
-      setTimeout(function () { if (playing && ctx.state !== 'running') showUnlock(true); }, 350);
-    }
     ticker.start(schedule); schedule();
     lockScreen();
     cancelAnimationFrame(raf); raf = requestAnimationFrame(draw);
@@ -837,7 +881,7 @@ dialog .help{margin:10px 0 0}
 
   function stop() {
     playing = false;
-    ticker.stop(); cancelAnimationFrame(raf); unlockScreen(); stopKeepAlive(); showUnlock(false);
+    ticker.stop(); cancelAnimationFrame(raf); unlockScreen(); stopKeepAlive();
     if (midi.on && midi.out) {
       try { if (midi.out.clear) midi.out.clear(); midi.out.send([0xFC]); } catch (e) {}
     }
@@ -872,24 +916,27 @@ dialog .help{margin:10px 0 0}
   nudger($('minus'), -1); nudger($('plus'), 1); nudger($('stMinus'), -1); nudger($('stPlus'), 1);
   slider.addEventListener('input', function () { setBpm(+slider.value); });
 
-  // Drag around the ring to set tempo.
+  // Drag around the ring to change tempo. It moves from where you grab it, so a tap never jumps the tempo.
   (function () {
-    var dial = $('dial'), dragging = false, prevA = 0;
+    var dial = $('dial'), dragging = false, lastA = 0, startBpm = 0, total = 0, K = (MAX_BPM - MIN_BPM) / (A1 - A0);
     function angleOf(e) {
       var r = dial.getBoundingClientRect();
-      var dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-      var a = Math.atan2(dx, -dy) * 180 / Math.PI;
-      if (Math.abs(a) > A1) a = prevA > 0 ? A1 : A0;            // the gap at the bottom clamps to the nearer end
-      prevA = a; return a;
+      return Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2))) * 180 / Math.PI;
     }
-    function apply(e) { var a = angleOf(e); setBpm(MIN_BPM + (a - A0) / (A1 - A0) * (MAX_BPM - MIN_BPM)); }
     dial.addEventListener('pointerdown', function (e) {
       var r = dial.getBoundingClientRect();
       var dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)) / (r.width / 2);
       if (dist < 0.55) return;                                  // ignore touches in the middle
-      dragging = true; prevA = bpmAngle(state.bpm); dial.setPointerCapture(e.pointerId); apply(e);
+      dragging = true; lastA = angleOf(e); startBpm = state.bpm; total = 0; dial.setPointerCapture(e.pointerId);
     });
-    dial.addEventListener('pointermove', function (e) { if (dragging) apply(e); });
+    dial.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var a = angleOf(e), d = a - lastA;
+      if (d > 180) d -= 360; else if (d < -180) d += 360;       // crossing the bottom of the ring
+      lastA = a;
+      total = clamp(total + d, (MIN_BPM - startBpm) / K, (MAX_BPM - startBpm) / K);
+      setBpm(startBpm + total * K);
+    });
     ['pointerup', 'pointercancel'].forEach(function (t) { dial.addEventListener(t, function () { dragging = false; }); });
   })();
 
@@ -1087,7 +1134,7 @@ dialog .help{margin:10px 0 0}
       if (!active) return;
       active = false;
       var dx = e.clientX - startX, dy = e.clientY - startY;
-      if (!cancelled && Math.abs(dx) >= SWIPE && Math.abs(dx) > Math.abs(dy) * 1.2) start(dx > 0 ? 1 : -1);
+      if (!cancelled && Math.abs(dx) >= SWIPE && Math.abs(dx) > Math.abs(dy) * 1.2) requestStart(dx > 0 ? 1 : -1);
       else setAngle(0);
     }
     card.addEventListener('pointerup', function (e) { end(e, false); });
@@ -1123,6 +1170,7 @@ dialog .help{margin:10px 0 0}
   /* ---------- keyboard ---------- */
   document.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape' && !gate.hidden) { hideGate(); return; }
     if (e.key === 'Escape' && stageOpen) { closeStage(); return; }
     if (document.querySelector('dialog[open]')) return;
     var tag = (e.target.tagName || '').toLowerCase();
