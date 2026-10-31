@@ -22,6 +22,8 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - **Hi-hat setting** with its own rate: off, on the beats, eighths, triplets or sixteenths (swing applies to eighth hats)
 - **Hat tone** (darker to brighter) and **Hat timing** (40 ms ahead to 80 ms behind) sliders to loosen the hats off the grid; kick and snare stay put
 - Every setting, including the hat sliders, is remembered in the browser between visits
+- **iPhone: play over other music** (on by default): Spotify or Apple Music keeps playing while you tap along or play the metronome on top. The silent switch mutes the metronome in this mode; turn it off to play through the silent switch (iOS then pauses other music)
+- **Sound comes back after switching apps**: the first tap back builds a fresh audio context, so no refresh is needed. If iOS paused it mid-play, it stops cleanly and one tap on Start carries on
 - **Reset to defaults** button at the bottom puts every sound and rhythm setting back in one tap, with **Undo** for 10 seconds. Presets, the visual delay calibration and the MIDI output are kept
 - Styled to match [music.gwstudio.com.au](https://music.gwstudio.com.au/) (same colours, Fraunces and Instrument Sans fonts, film grain) with a header link back to the site
 - **Visual delay** slider plus **calibrate by tapping**, so the pendulum matches what you hear on Bluetooth speakers

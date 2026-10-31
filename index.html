@@ -319,6 +319,10 @@ dialog .help{margin:10px 0 0}
         </label>
         <p class="help">Tone makes the hats darker or brighter. Timing pushes them ahead of or behind the beat for a looser feel.</p>
       </div>
+      <div id="mixRow" hidden>
+        <label class="check"><input type="checkbox" id="mix" checked> Play over other music</label>
+        <p class="help" id="mixHelp">Spotify or Apple Music keeps playing while you tap along or play the metronome over it. The silent switch also mutes the metronome while this is on.</p>
+      </div>
       <label class="check" id="hapticRow"><input type="checkbox" id="haptics"> Vibrate on each beat</label>
       <label class="field">Visual delay <output id="syncOut">0 ms</output>
         <input type="range" id="sync" min="0" max="500" step="5" value="0">
@@ -426,7 +430,7 @@ dialog .help{margin:10px 0 0}
     countIn: 0,
     trainer: { on: false, step: 5, every: 4, max: 160 },
     gap: { on: false, play: 4, mute: 1 },
-    vol: 80, sync: 0, haptics: false, midiOut: ''
+    vol: 80, sync: 0, haptics: false, midiOut: '', mix: true
   };
   var playing = false;
 
@@ -487,6 +491,7 @@ dialog .help{margin:10px 0 0}
         if (s.vol >= 0 && s.vol <= 100) state.vol = s.vol | 0;
         if (s.sync >= 0 && s.sync <= 500) state.sync = +s.sync;
         state.haptics = !!s.haptics;
+        if (typeof s.mix === 'boolean') state.mix = s.mix;
         if (typeof s.midiOut === 'string') state.midiOut = s.midiOut;
         return;
       }
@@ -763,13 +768,20 @@ dialog .help{margin:10px 0 0}
   function applyVolume() { if (master) { var v = state.vol / 100; master.gain.value = v * v; } }
 
   // iPhone and iPad: every browser there uses WebKit, which starts audio locked and only unlocks it from a
-  // real tap (a swipe does not count). Also, Web Audio is muted by the silent switch unless the page asks
-  // for "playback" audio, so we request that, with a silent looping <audio> as the older-iOS fallback.
+  // real tap (a swipe does not count). The audio session decides how we share the speaker:
+  //  - "Play over other music" on (default): an "ambient" session mixes with Spotify and Apple Music, and
+  //    like them respects the silent switch.
+  //  - off: a "playback" session (plus a silent looping <audio> on older iOS) plays even in silent mode,
+  //    but iOS pauses other music to do it.
   var IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var keepAlive = null;
 
+  function sessionType() { return state.mix ? 'ambient' : 'playback'; }
+  function applySession() {
+    try { if (navigator.audioSession) navigator.audioSession.type = sessionType(); } catch (e) {}
+  }
   function playKeepAlive() {
-    if (!IOS) return;
+    if (!IOS || state.mix) return;                                // an <audio> element would stop Spotify
     try {
       if (navigator.audioSession && navigator.audioSession.type === 'playback') return;
       if (!keepAlive) {
@@ -791,7 +803,7 @@ dialog .help{margin:10px 0 0}
     if (!ctx) {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) { say('This browser does not support Web Audio.'); return false; }
-      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+      applySession();
       try { ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { ctx = new AC(); }
       master = ctx.createGain();
       master.connect(ctx.destination);
@@ -799,6 +811,8 @@ dialog .help{margin:10px 0 0}
       buildBuffers();
       // The browser can suspend the context (autoplay policy, phone call, device change).
       ctx.onstatechange = function () {
+        if (!ctx) return;
+        if (ctx.state === 'interrupted' || (ctx.state !== 'running' && document.hidden)) staleAudio = true;
         if (ctx.state !== 'running' && playing) ctx.resume().catch(noop);
       };
     }
@@ -806,8 +820,25 @@ dialog .help{margin:10px 0 0}
     return true;
   }
 
+  // Coming back to the tab or app: iPhone often leaves the old audio context silent even when it claims
+  // to be running, which used to mean refreshing the page. So once the page has been hidden, the next tap
+  // throws the old context away and builds a fresh one inside that tap.
+  var staleAudio = false;
+  function markStale() { if (ctx) staleAudio = true; }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { if (!playing) markStale(); return; }
+    if (playing && ctx) setTimeout(function () {                  // still silent after resuming: stop cleanly
+      if (playing && ctx && ctx.state !== 'running') {
+        stop(); staleAudio = true; say('The phone paused the sound. Tap Start to carry on.');
+      }
+    }, 600);
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted && !playing) markStale(); });
+  window.addEventListener('pagehide', function () { if (!playing) markStale(); });
+
   // Any real tap or key press unlocks audio, so a later swipe-to-start already has sound.
   function unlockAudio() {
+    if (staleAudio && !playing) { staleAudio = false; resetAudio(); }
     if (!ctx) { if (!ensureAudio()) return; }
     else if (ctx.state !== 'running') ctx.resume().catch(noop);
     try {                                                       // the classic iOS unlock: play one silent sample
@@ -1228,6 +1259,13 @@ dialog .help{margin:10px 0 0}
     }
   });
   volEl.addEventListener('input', function () { state.vol = +volEl.value; applyVolume(); save(); });
+  $('mixRow').hidden = !IOS;                                      // only iPhone and iPad need the choice
+  $('mix').addEventListener('change', function () {
+    state.mix = $('mix').checked; save();
+    applySession();
+    if (state.mix) stopKeepAlive(); else if (playing) playKeepAlive();
+    if (!playing) markStale();                                    // the next tap starts audio in the new mode
+  });
   $('haptics').addEventListener('change', function () { state.haptics = $('haptics').checked; save(); if (state.haptics && navigator.vibrate) navigator.vibrate(20); });
   if (!navigator.vibrate) $('hapticRow').hidden = true;
   $('sync').addEventListener('input', function () { state.sync = +$('sync').value; $('syncOut').textContent = state.sync + ' ms'; save(); });
@@ -1424,7 +1462,7 @@ dialog .help{margin:10px 0 0}
     $('trOn').checked = state.trainer.on; $('trStep').value = state.trainer.step;
     $('trEvery').value = state.trainer.every; $('trMax').value = state.trainer.max;
     $('gapOn').checked = state.gap.on; $('gapPlay').value = state.gap.play; $('gapMute').value = state.gap.mute;
-    $('haptics').checked = state.haptics; $('sync').value = state.sync; $('syncOut').textContent = state.sync + ' ms';
+    $('haptics').checked = state.haptics; $('mix').checked = state.mix; $('sync').value = state.sync; $('syncOut').textContent = state.sync + ' ms';
     buildDots(); refreshDrumUI(); setBpm(state.bpm, true);
   }
 

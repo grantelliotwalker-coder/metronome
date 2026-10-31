@@ -49,6 +49,28 @@ LOCKED_AUDIO = """
 })();
 """
 
+IPHONE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "
+          "(KHTML, like Gecko) CriOS/130.0.0.0 Mobile/15E148 Safari/604.1")
+
+# iPhone audio session API, <audio> play counter, AudioContext counter and a controllable page visibility.
+IOS_MOCK = """
+(function () {
+  navigator.audioSession = { type: 'auto' };
+  window.__plays = 0;
+  var play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () { window.__plays++; return play.apply(this, arguments); };
+  window.__ctxs = [];
+  var Orig = window.AudioContext;
+  var Counted = function (o) { var c = new Orig(o); window.__ctxs.push(c); return c; };
+  Counted.prototype = Orig.prototype;
+  window.AudioContext = Counted;
+  window.__vis = 'visible';
+  Object.defineProperty(document, 'visibilityState', { get: function () { return window.__vis; }, configurable: true });
+  Object.defineProperty(document, 'hidden', { get: function () { return window.__vis === 'hidden'; }, configurable: true });
+  window.__setVis = function (v) { window.__vis = v; document.dispatchEvent(new Event('visibilitychange')); };
+})();
+"""
+
 MIDI_MOCK = """
 (function () {
   window.__midi = [];
@@ -101,8 +123,10 @@ class Env:
     def __init__(self, browser, url):
         self.browser, self.url, self.errors = browser, url, []
 
-    def page(self, state=None, init=(), reduced=False, grant=False, viewport=None):
+    def page(self, state=None, init=(), reduced=False, grant=False, viewport=None, ua=None):
         kw = dict(viewport=viewport or {"width": 390, "height": 844}, has_touch=True)
+        if ua:
+            kw["user_agent"] = ua
         if reduced:
             kw["reduced_motion"] = "reduce"
         ctx = self.browser.new_context(**kw)
@@ -891,6 +915,56 @@ def test_hats_only_in_drum_kits(env):
     assert not ({x["name"] for x in clicks(page)} & kit), "switching to Click while playing stops the hats at once"
 
 
+def test_play_over_other_music_on_iphone(env):
+    page = env.page(cfg(), init=[IOS_MOCK], ua=IPHONE)
+    page.click("#pSound summary")
+    assert page.locator("#mixRow").is_visible() and page.is_checked("#mix"), "on by default on iPhone"
+    page.click("#tap"); page.click("#tap")
+    assert page.evaluate("navigator.audioSession.type") == "ambient", "tapping along does not take over the speaker"
+    page.click("#go"); page.wait_for_timeout(500); page.click("#go")
+    assert page.evaluate("navigator.audioSession.type") == "ambient"
+    assert page.evaluate("window.__plays") == 0, "no <audio> element, which would pause Spotify"
+    assert len(clicks(page)) > 0
+    page.uncheck("#mix")
+    assert page.evaluate("navigator.audioSession.type") == "playback"
+    page.click("#go"); page.wait_for_timeout(300); page.click("#go")
+    assert page.evaluate("navigator.audioSession.type") == "playback", "plays through the silent switch"
+    page.reload(); page.wait_for_timeout(300)
+    assert not page.is_checked("#mix"), "the choice is remembered"
+    other = env.page(cfg())
+    other.click("#pSound summary")
+    assert not other.locator("#mixRow").is_visible(), "desktop and Android do not need the setting"
+
+
+def test_sound_comes_back_after_leaving_the_app(env):
+    page = env.page(cfg(bpm=240), init=[IOS_MOCK], ua=IPHONE)
+    page.click("#go"); page.wait_for_timeout(400); page.click("#go")
+    assert page.evaluate("window.__ctxs.length") == 1
+    page.evaluate("window.__setVis('hidden')"); page.wait_for_timeout(100)
+    page.evaluate("window.__setVis('visible')"); page.wait_for_timeout(100)
+    page.evaluate("window.__clicks = []")
+    page.click("#go"); page.wait_for_timeout(800); page.click("#go")
+    assert page.evaluate("window.__ctxs.length") == 2, "a fresh audio context is built inside the first tap back"
+    assert page.evaluate("window.__ctxs[0].state") == "closed" and page.evaluate("window.__ctxs[1].state") == "running"
+    assert len(clicks(page)) >= 3, "and it plays without a refresh"
+    page.click("#tap"); page.click("#tap")
+    assert page.evaluate("window.__ctxs.length") == 2, "only once per return, not on every tap"
+
+
+def test_paused_by_the_phone_while_playing(env):
+    page = env.page(cfg(bpm=240), init=[IOS_MOCK], ua=IPHONE)
+    page.click("#go"); page.wait_for_timeout(300)
+    page.evaluate("AudioContext.prototype.resume = function () { return Promise.resolve(); }")   # iOS refuses
+    page.evaluate("window.__setVis('hidden')")
+    page.evaluate("window.__ctxs[0].suspend()"); page.wait_for_timeout(100)
+    page.evaluate("window.__setVis('visible')"); page.wait_for_timeout(900)
+    assert page.inner_text("#go") == "Start" and "Tap Start" in page.inner_text("#msg"), "stops cleanly and says so"
+    page.evaluate("delete AudioContext.prototype.resume")
+    page.click("#go"); page.wait_for_timeout(500)
+    assert page.evaluate("window.__ctxs.length") == 2 and page.inner_text("#go") == "Stop", "one tap gets going again"
+    page.click("#go")
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -909,7 +983,8 @@ ORDER = [
     test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_jazz_waltz_brushes, test_edit_drum_per_beat,
     test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
     test_hat_tone, test_hat_timing_off_the_grid, test_hat_sliders_ui,
-    test_hats_only_in_drum_kits, test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,
+    test_hats_only_in_drum_kits, test_play_over_other_music_on_iphone,
+    test_sound_comes_back_after_leaving_the_app, test_paused_by_the_phone_while_playing, test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,
 ]
 
 
