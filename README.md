@@ -21,6 +21,8 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - **Hi-hat setting** with its own rate: off, on the beats, eighths, triplets or sixteenths (swing applies to eighth hats)
 - **Hat tone** (darker to brighter) and **Hat timing** (40 ms ahead to 80 ms behind) sliders to loosen the hats off the grid; kick and snare stay put
 - Every setting, including the hat sliders, is remembered in the browser between visits
+- **Reset to defaults** button at the bottom puts every sound and rhythm setting back in one tap, with **Undo** for 10 seconds. Presets, the visual delay calibration and the MIDI output are kept
+- Styled to match [music.gwstudio.com.au](https://music.gwstudio.com.au/) (same colours, Fraunces and Instrument Sans fonts, film grain) with a header link back to the site
 - **Visual delay** slider plus **calibrate by tapping**, so the pendulum matches what you hear on Bluetooth speakers
 - Optional vibration on each beat (Android Chrome)
 

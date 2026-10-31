@@ -10,6 +10,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import socketserver
 import statistics
 import sys
@@ -107,6 +108,9 @@ class Env:
         ctx = self.browser.new_context(**kw)
         if grant:
             ctx.grant_permissions(["clipboard-read", "clipboard-write"])
+        # Web fonts come from Google; the sandbox has no route there, so serve nothing and let the fallbacks show.
+        ctx.route(re.compile(r"https://fonts\.(googleapis|gstatic)\.com/.*"),
+                  lambda r: r.fulfill(status=200, content_type="text/css", body=""))
         page = ctx.new_page()
         for s in (HOOK, *init):
             page.add_init_script(s)
@@ -809,6 +813,45 @@ def test_hat_sliders_ui(env):
     assert not page.locator("#hatTone").is_visible() and not page.locator("#hatDelay").is_visible()
 
 
+def test_reset_to_defaults_with_undo(env):
+    page = env.page(cfg(bpm=173, num=7, den=8, sound="drums", hat=4, hatTone=90, hatDelay=60, swing=60,
+                        drum=["s", "h", None, "k", "s", "h", "k"], countIn=2, vol=40, sync=120,
+                        trainer=dict(on=True, step=3, every=2, max=200)))
+    page.evaluate("localStorage.setItem('metronome.presets', JSON.stringify([{name:'Keep me', s:{bpm:90}}]))")
+    page.reload(); page.wait_for_timeout(300)
+    assert page.locator("#resetAll").is_visible() and not page.locator("#undoReset").is_visible()
+    page.click("#resetAll")
+    st = page.evaluate("JSON.parse(localStorage.getItem('metronome.v3'))")
+    assert (st["bpm"], st["num"], st["den"], st["sound"], st["hat"], st["hatTone"], st["hatDelay"], st["countIn"]) == \
+        (100, 4, 4, "click", 2, 50, 0, 0), st
+    assert not any(st["drum"]) and st["acc"] == [2, 1, 1, 1] and st["swing"] == 50 and not st["trainer"]["on"]
+    assert st["vol"] == 80 and st["sync"] == 120, "volume resets, the visual delay calibration is kept"
+    assert page.inner_text("#bpmOut") == "100" and page.inner_text("#sigBadge") == "4/4"
+    assert page.input_value("#sound") == "click" and "reset" in page.inner_text("#msg").lower()
+    assert "Keep me" in page.text_content("#pSel"), "presets survive a reset"
+    page.click("#undoReset")
+    st = page.evaluate("JSON.parse(localStorage.getItem('metronome.v3'))")
+    assert (st["bpm"], st["num"], st["sound"], st["hatTone"], st["hatDelay"], st["vol"]) == (173, 7, "drums", 90, 60, 40), "undo"
+    assert st["drum"][:2] == ["s", "h"] and not page.locator("#undoReset").is_visible()
+
+
+def test_reset_while_playing_keeps_time(env):
+    page = env.page(cfg(bpm=200, num=3, sound="wood"))
+    page.click("#go"); page.wait_for_timeout(700)
+    page.click("#resetAll"); page.wait_for_timeout(1500); page.click("#go")
+    c = clicks(page)
+    late = [x for x in c if x["t"] > c[-1]["t"] - 1.0]
+    for d in diffs([x["t"] for x in late]):
+        near(d, 0.6, 1e-3, "plays on at the default 100 BPM after a reset")
+
+
+def test_site_header_links_home(env):
+    page = env.page()
+    hrefs = page.eval_on_selector_all(".site-bar a", "as => as.map(a => a.href)")
+    assert hrefs and all(h.startswith("https://music.gwstudio.com.au") for h in hrefs)
+    assert page.locator(".logo").is_visible()
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -827,6 +870,7 @@ ORDER = [
     test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_edit_drum_per_beat,
     test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
     test_hat_tone, test_hat_timing_off_the_grid, test_hat_sliders_ui,
+    test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,
 ]
 
 
