@@ -301,7 +301,8 @@ dialog .help{margin:10px 0 0}
       </div>
       <p class="help" id="soundHelp" hidden>Kick and snare follow your time signature. Tap a beat dot to change its drum: kick, snare, hi-hat or off.</p>
       <div class="hatrow" id="hatRow" hidden>
-        <label class="field">Hi-hat
+        <label class="check" id="sweepRow" hidden><input type="checkbox" id="sweep" checked> Brush sweep (the soft swish under every beat)</label>
+        <label class="field"><span id="hatLabel">Hi-hat</span>
           <select id="hatRate">
             <option value="0">Off</option>
             <option value="1">On the beats</option>
@@ -421,7 +422,7 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- state ---------- */
   var state = {
-    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click', hat: 2, drum: [], hatTone: 50, hatDelay: 0,
+    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click', hat: 2, drum: [], hatTone: 50, hatDelay: 0, sweep: true,
     countIn: 0,
     trainer: { on: false, step: 5, every: 4, max: 160 },
     gap: { on: false, play: 4, mute: 1 },
@@ -432,7 +433,7 @@ dialog .help{margin:10px 0 0}
   // Musical settings travel with presets and share links; the rest is per device.
   function musical() {
     return { bpm: state.bpm, num: state.num, den: state.den, acc: state.acc.slice(), sub: state.sub,
-             swing: state.swing, poly: state.poly, sound: state.sound, hat: state.hat, drum: state.drum.slice(), hatTone: state.hatTone, hatDelay: state.hatDelay, countIn: state.countIn,
+             swing: state.swing, poly: state.poly, sound: state.sound, hat: state.hat, drum: state.drum.slice(), hatTone: state.hatTone, hatDelay: state.hatDelay, sweep: state.sweep, countIn: state.countIn,
              trainer: { on: state.trainer.on, step: state.trainer.step, every: state.trainer.every, max: state.trainer.max },
              gap: { on: state.gap.on, play: state.gap.play, mute: state.gap.mute } };
   }
@@ -448,6 +449,7 @@ dialog .help{margin:10px 0 0}
     if (s.hat >= 0 && s.hat <= 4) state.hat = s.hat | 0;
     if (s.hatTone >= 0 && s.hatTone <= 100) state.hatTone = +s.hatTone;
     if (s.hatDelay >= -40 && s.hatDelay <= 80) state.hatDelay = +s.hatDelay;
+    if (typeof s.sweep === 'boolean') state.sweep = s.sweep;
     if (s.countIn >= 0 && s.countIn <= 2) state.countIn = s.countIn | 0;
     var t = s.trainer;
     if (t && typeof t === 'object') {
@@ -649,22 +651,43 @@ dialog .help{margin:10px 0 0}
       var nz = rnd(), bright = nz - sp * 0.6; sp = nz;
       return Math.sin(TAU * 185 * t) * Math.exp(-t * 28) * 0.55 + bright * Math.exp(-t * 20);
     });
-    var ph2 = 0, lp = 0, pb = 0;
-    buffers.bkick = make(0.34, function (t) {                    // brush kit: a soft thud with no beater click
-      ph2 += TAU * (50 + 70 * Math.exp(-t * 22)) / sr;
-      return Math.sin(ph2) * (1 - Math.exp(-t * 400)) * Math.exp(-t * 8);
+    // Jazz brush kit. Everything is filtered noise with soft attacks and no hard edges, so it sits back
+    // and can play for a long time without tiring the ear.
+    function svf() {                                              // state-variable filter, band-pass output
+      var lo = 0, bp = 0;
+      return function (x, fc, damp) {
+        var f = 2 * Math.sin(Math.PI * Math.min(fc, sr / 6) / sr);
+        lo += f * bp; var hi = x - lo - damp * bp; bp += f * hi;
+        return bp;
+      };
+    }
+    var ph2 = 0;
+    buffers.bkick = make(0.45, function (t) {                    // feathered bass drum: felt, not heard
+      ph2 += TAU * (50 + 18 * Math.exp(-t * 25)) / sr;
+      return Math.sin(ph2) * (1 - Math.exp(-t * 110)) * Math.exp(-t * 7);
     });
-    buffers.bsnare = make(0.26, function (t) {                   // a brush swish: low-passed noise with a slow attack
-      lp += (rnd() - lp) * 0.5;
-      return lp * (1 - Math.exp(-t * 70)) * Math.exp(-t * 13);
+    var tapF = svf(), tapL = 0;
+    buffers.bsnare = make(0.5, function (t) {                    // brush tap on the snare: a soft "tsh" with a wire tail
+      tapL += (rnd() - tapL) * 0.55;                              // take the fizz off the top
+      var env = (1 - Math.exp(-t * 500)) * (Math.exp(-t * 32) + 0.22 * Math.exp(-t * 7));
+      return tapF(tapL, 2300, 1.3) * env + Math.sin(TAU * 196 * t) * 0.06 * Math.exp(-t * 30);
     });
-    buffers.bhat = make(0.12, function (t) {                     // a soft shaker-like tick
-      var nz = rnd(), hp = nz - pb; pb = nz;
-      return hp * (1 - Math.exp(-t * 260)) * Math.exp(-t * 38);
+    var hatF = svf(), hatL = 0;
+    buffers.bhat = make(0.22, function (t) {                     // the light in-between tap ("and" of the beat)
+      hatL += (rnd() - hatL) * 0.6;
+      return hatF(hatL, 2900, 1.4) * (1 - Math.exp(-t * 700)) * Math.exp(-t * 40);
+    });
+    var swF = svf(), swL = 0, grain = 0;
+    buffers.bsweep = make(6, function (t) {                      // the left-hand sweep: a slow circle across the head
+      swL += (rnd() - swL) * 0.5;
+      grain += (rnd() - grain) * 0.004;                          // bristles catching the coating
+      var fc = 1500 + 650 * Math.sin(TAU * 0.55 * t) + 250 * Math.sin(TAU * 1.7 * t);
+      return swF(swL, fc, 1.6) * (1 + 3 * grain);
     });
     buffers.beep = make(0.14, function (t) {
       return Math.sin(TAU * 1000 * t) * Math.min(1, t / 0.004) * Math.exp(-t * 28);
     });
+    for (var k in buffers) buffers[k].label = k;
   }
 
   var RATE = { accent: 1.3, beat: 1, sub: 0.8, poly: 1 };
@@ -682,7 +705,7 @@ dialog .help{margin:10px 0 0}
   // its own rate setting: off, on the beats, eighths, triplets or sixteenths.
   var KITS = {
     drums:   { prefix: '',  gain: { kick: 1,   snare: 0.9, hat: 0.5 } },
-    brushes: { prefix: 'b', gain: { kick: 0.7, snare: 0.8, hat: 0.45 } }
+    brushes: { prefix: 'b', gain: { kick: 0.22, snare: 0.7, hat: 0.32 }, soft: true }
   };
   function isDrumKit() { return state.sound === 'drums' || state.sound === 'brushes'; }
   function isCompound(num, den) { return den === 8 && num % 3 === 0 && num >= 6; }
@@ -703,9 +726,25 @@ dialog .help{margin:10px 0 0}
       src.playbackRate.value = Math.pow(2, (state.hatTone - 50) / 50 * 0.6);   // tone: about a seventh down to a seventh up
       time += state.hatDelay / 1000;                                         // timing: off the grid, early or late
     }
-    g.gain.value = kit.gain[name] * (lvl === 2 ? 1 : 0.8);
+    var vel = lvl === 2 ? 1 : 0.8;
+    if (kit.soft) vel *= 0.92 + Math.random() * 0.16;             // brushes: a little variation, like a real player
+    g.gain.value = kit.gain[name] * vel;
     src.connect(g); g.connect(master);
     src.start(time);
+  }
+  // Brush sweep: one long swish per beat that swells in, holds and fades into the next, so the
+  // sweeps overlap into a continuous, quiet wash. A slightly stronger swish starts each bar.
+  function playSweep(time, dur, first) {
+    if (state.sound !== 'brushes' || !state.sweep) return;
+    var len = Math.min(dur * 1.3, 4.5), src = ctx.createBufferSource(), g = ctx.createGain();
+    var peak = 0.2 * (first ? 1.15 : 0.9) * (0.92 + Math.random() * 0.16);
+    src.buffer = buffers.bsweep;
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(peak, time + len * 0.35);
+    g.gain.setValueAtTime(peak, time + len * 0.55);
+    g.gain.linearRampToValueAtTime(0.0001, time + len);
+    src.connect(g); g.connect(master);
+    src.start(time, Math.random() * (6 - len - 0.05), len);       // a different stretch of the sweep each time
   }
   function playBeat(time, lvl, idx) {
     if (isDrumKit()) playDrum(time, partAt(idx, curNum), lvl);
@@ -923,7 +962,8 @@ dialog .help{margin:10px 0 0}
         if (!barMuted && lvl > 0) playBeat(nextTime, lvl, beatIdx);
         if (isDrumKit() && !barMuted && !barCount && state.hat > 0) {
           var comp = isCompound(curNum, state.den);
-          if (!comp && lvl > 0 && partAt(beatIdx, curNum) !== 'h') playDrum(nextTime, 'h', lvl);   // hat under the beat
+          if (!comp && lvl > 0 && partAt(beatIdx, curNum) !== 'h' && !(state.sound === 'brushes' && state.hat >= 2))
+            playDrum(nextTime, 'h', lvl);                         // hat under the beat (brushes only fill between beats)
           // Hats per beat. In compound meters the beats are already eighths, so only the faster rates add more.
           var hn = comp ? (state.hat >= 3 ? 2 : 1) : state.hat;
           for (var hk = 1; hk < hn; hk++) {
@@ -931,6 +971,7 @@ dialog .help{margin:10px 0 0}
             playDrum(nextTime + dur * frac, 'h', 1);
           }
         }
+        if (!barMuted && !barCount) playSweep(nextTime, dur, beatIdx === 0);
         queue.push({ time: nextTime, idx: beatIdx, dur: dur, n: beatCount++, lvl: lvl, muted: barMuted, count: barCount, bar: barNum });
       } else if (!barMuted && !barCount) {
         playSub(nextTime);
@@ -1116,13 +1157,19 @@ dialog .help{margin:10px 0 0}
   }
   function refreshDrumUI() {
     var d = isDrumKit();
-    $('hatRow').hidden = !d; $('soundHelp').hidden = !d;
+    var br = state.sound === 'brushes';
+    $('hatRow').hidden = !d; $('soundHelp').hidden = !d; $('sweepRow').hidden = !br;
+    $('hatLabel').textContent = br ? 'Brush taps' : 'Hi-hat';
+    $('soundHelp').textContent = br
+      ? 'A soft jazz brush kit: a feathered bass drum, brush taps and a continuous sweep. Tap a beat dot to change its part.'
+      : 'Kick and snare follow your time signature. Tap a beat dot to change its drum: kick, snare, hi-hat or off.';
     subSel.disabled = d;                                          // drum kits use the Hi-hat setting instead
     $('dotNote').textContent = d ? 'Tap a beat to change its drum: kick, snare, hi-hat, off.'
                                  : 'Tap a beat to change it: normal, accent, off.';
     hatTexts(); refreshSwing(); refreshDots();
   }
   $('hatRate').addEventListener('change', function () { state.hat = +$('hatRate').value; refreshSwing(); save(); });
+  $('sweep').addEventListener('change', function () { state.sweep = $('sweep').checked; save(); });
   function hatTexts() {
     var t = state.hatTone, d = state.hatDelay;
     $('hatToneOut').textContent = t === 50 ? 'Normal' : (t < 50 ? 'Darker' : 'Brighter');
@@ -1167,10 +1214,16 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- sound, feel, calibration ---------- */
   soundSel.addEventListener('change', function () {
-    state.sound = soundSel.value; save(); refreshDrumUI();
+    state.sound = soundSel.value;
+    if (state.sound === 'brushes' && state.swing === 50) {         // jazz brushes want a gentle swing
+      state.swing = 62; swingAmt.value = 62;
+      say('Brushes start with a gentle swing. Change it under Rhythm.');
+    }
+    save(); refreshDrumUI();
     if (!playing && ensureAudio()) {                             // preview
       var t0 = ctx.currentTime + 0.03;
-      if (isDrumKit()) { playDrum(t0, 'k', 2); playDrum(t0 + 0.2, 's', 2); }
+      if (state.sound === 'brushes') { playSweep(t0, 0.6, true); playDrum(t0, 'k', 2); playDrum(t0 + 0.4, 's', 1); playDrum(t0 + 0.65, 'h', 1); playDrum(t0 + 0.8, 's', 1); }
+      else if (isDrumKit()) { playDrum(t0, 'k', 2); playDrum(t0 + 0.2, 's', 2); }
       else play(t0, 'accent', state.sound);
     }
   });
@@ -1366,7 +1419,7 @@ dialog .help{margin:10px 0 0}
   function syncUI() {
     numSel.value = state.num; denSel.value = state.den; subSel.value = state.sub;
     swingAmt.value = state.swing; polySel.value = state.poly; soundSel.value = state.sound;
-    $('hatRate').value = state.hat; $('hatTone').value = state.hatTone; $('hatDelay').value = state.hatDelay;
+    $('hatRate').value = state.hat; $('sweep').checked = state.sweep; $('hatTone').value = state.hatTone; $('hatDelay').value = state.hatDelay;
     $('countIn').value = state.countIn; volEl.value = state.vol;
     $('trOn').checked = state.trainer.on; $('trStep').value = state.trainer.step;
     $('trEvery').value = state.trainer.every; $('trMax').value = state.trainer.max;

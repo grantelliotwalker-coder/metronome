@@ -29,7 +29,7 @@ HOOK = """
   AudioBufferSourceNode.prototype.start = function (t) {
     var b = this.buffer; if (b && b.length <= 1) return start.apply(this, arguments);   // silent unlock sample
     if (!ids.has(b)) ids.set(b, ++n);
-    window.__clicks.push({ t: t || 0, rate: this.playbackRate.value, buf: ids.get(b) });
+    window.__clicks.push({ t: t || 0, rate: this.playbackRate.value, buf: ids.get(b), name: b.label || '' });
     return start.apply(this, arguments);
   };
   var gain = AudioContext.prototype.createGain;
@@ -73,7 +73,7 @@ def serve():
 
 
 def cfg(**o):
-    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", hat=2, drum=[], hatTone=50, hatDelay=0, countIn=0,
+    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", hat=2, drum=[], hatTone=50, hatDelay=0, sweep=True, countIn=0,
              trainer=dict(on=False, step=5, every=4, max=160), gap=dict(on=False, play=4, mute=1),
              vol=80, sync=0, haptics=False, midiOut="")
     s.update(o)
@@ -212,8 +212,8 @@ def test_sounds_exist(env):
     page.click("#pSound summary")
     for name in ["click", "wood", "rim", "cowbell", "hat", "beep", "drums", "brushes"]:
         page.select_option("#sound", name)
-    assert page.evaluate("window.__clicks.length") == 10, "each sound previews once; the two kits play kick then snare"
-    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 10, "every sound, kick and snare is distinct"
+    assert page.evaluate("window.__clicks.length") == 13, "each sound previews once; drums play kick, snare; brushes a little phrase"
+    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 12, "every sound and kit part is distinct"
     assert page.locator("#soundHelp").is_visible(), "drum help is shown while Drum beat is selected"
     page.select_option("#sound", "beep")
     assert not page.locator("#soundHelp").is_visible()
@@ -710,16 +710,43 @@ def test_split_is_ignored_by_drum_kits(env):
     assert all(any(abs(h["t"] - b["t"]) < 1e-4 for b in beats) for h in hats[:8]), "Split each beat does not add hats"
 
 
+def by_name(c, name):
+    return [x for x in c if x["name"] == name]
+
+
 def test_brush_kit(env):
     page, c = env.run_clicks(cfg(bpm=240, num=4, sound="brushes"), 2.3)
-    beats, hats = split_drums(c)
-    b = [x["buf"] for x in beats[:8]]
-    assert b[0] == b[2] == b[4] == b[6] and b[1] == b[3] == b[5] == b[7] and b[0] != b[1], f"same backbeat: {b}"
+    beats = sorted(by_name(c, "bkick") + by_name(c, "bsnare"), key=lambda x: x["t"])
+    b = [x["name"] for x in beats[:8]]
+    assert b == ["bkick", "bsnare"] * 4, f"same backbeat: {b}"
     for d in diffs([x["t"] for x in beats[:8]]):
         near(d, 0.25, 1e-4, "brush beats sit on the grid")
-    assert len(hats) >= 14, "brushes have hats too"
+    taps, sweeps = by_name(c, "bhat"), by_name(c, "bsweep")
+    assert len(taps) >= 7 and all(any(abs(h["t"] - (x["t"] + 0.125)) < 1e-4 for x in beats) for h in taps[:7]), \
+        "brush taps fill between the beats, not on top of them"
+    assert len(sweeps) >= 8 and all(any(abs(s["t"] - x["t"]) < 1e-4 for x in beats) for s in sweeps[:8]), "a sweep on every beat"
     page.reload(); page.wait_for_timeout(300)
     assert page.input_value("#sound") == "brushes"
+
+
+def test_jazz_waltz_brushes(env):
+    _, c = env.run_clicks(cfg(bpm=120, num=3, sound="brushes", swing=62), 3.2)
+    beats = sorted(by_name(c, "bkick") + by_name(c, "bsnare"), key=lambda x: x["t"])
+    assert [x["name"] for x in beats[:3]] == ["bkick", "bsnare", "bsnare"], "jazz waltz: feathered kick, then two taps"
+    for x in beats[:5]:
+        assert any(abs(h["t"] - (x["t"] + 0.5 * 0.62)) < 1e-3 for h in by_name(c, "bhat")), "swung in-between tap"
+    _, c = env.run_clicks(cfg(bpm=120, num=3, sound="brushes", sweep=False), 2.0)
+    assert not by_name(c, "bsweep") and by_name(c, "bsnare"), "the sweep can be turned off"
+    _, c = env.run_clicks(cfg(bpm=120, num=3, sound="drums"), 2.0)
+    assert not by_name(c, "bsweep"), "no sweep in the normal drum kit"
+    page = env.page(cfg())
+    page.click("#pSound summary"); page.select_option("#sound", "brushes")
+    assert page.locator("#sweepRow").is_visible() and page.inner_text("#hatLabel") == "Brush taps"
+    assert page.evaluate("JSON.parse(localStorage.getItem('metronome.v3')).swing") == 62, "brushes start with a gentle swing"
+    page.uncheck("#sweep"); page.reload(); page.wait_for_timeout(300)
+    assert page.evaluate("JSON.parse(localStorage.getItem('metronome.v3')).sweep") is False
+    page.click("#pSound summary"); page.select_option("#sound", "drums")
+    assert not page.locator("#sweepRow").is_visible() and page.inner_text("#hatLabel") == "Hi-hat"
 
 
 def test_edit_drum_per_beat(env):
@@ -775,7 +802,7 @@ def test_hat_tone(env):
     assert {h["rate"] for h in hats} == {1.52}, "brighter hats play faster"
     assert {b["rate"] for b in beats} == {1.0}, "kick and snare keep their pitch"
     _, c = env.run_clicks(cfg(bpm=240, num=4, sound="brushes", hatTone=0), 2.3)
-    _, hats = split_drums(c)
+    hats = by_name(c, "bhat")
     assert {h["rate"] for h in hats} == {0.66}, "darker hats play slower"
 
 
@@ -867,7 +894,7 @@ ORDER = [
     test_tap_pendulum_starts_without_any_message, test_swipe_then_release_does_not_double_start,
     test_drum_beat_backbeat_with_hats, test_drum_beat_waltz_and_compound, test_drum_beat_sixteenth_hats,
     test_drum_beat_respects_accents_and_mutes,
-    test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_edit_drum_per_beat,
+    test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_jazz_waltz_brushes, test_edit_drum_per_beat,
     test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
     test_hat_tone, test_hat_timing_off_the_grid, test_hat_sliders_ui,
     test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,

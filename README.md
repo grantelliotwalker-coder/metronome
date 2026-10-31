@@ -16,8 +16,9 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - **Cross-rhythm:** a second voice with 2 to 9 clicks per bar (3 against 4 and so on)
 
 ## Sound and feel
-- Eight synthesized sounds: click, wood block, rimshot, cowbell, hi-hat, beep, **Drum beat** and a softer **Brush kit**
+- Eight synthesized sounds: click, wood block, rimshot, cowbell, hi-hat, beep, **Drum beat** and a jazz **Brush kit**
 - **Drum kits** play a backbeat that follows the time signature (4/4 kick snare kick snare, 3/4 kick snare snare, 6/8 and other compound meters on dotted-quarter groups). **Tap any beat dot to change its drum**: kick, snare, hi-hat or off
+- **Brush kit** is a soft jazz kit made to listen to for a long time: a feathered bass drum, brush taps that fill between the beats, and a continuous **brush sweep** (can be turned off). Each hit varies slightly like a real player, and it starts with a gentle swing, so 3/4 gives a jazz waltz
 - **Hi-hat setting** with its own rate: off, on the beats, eighths, triplets or sixteenths (swing applies to eighth hats)
 - **Hat tone** (darker to brighter) and **Hat timing** (40 ms ahead to 80 ms behind) sliders to loosen the hats off the grid; kick and snare stay put
 - Every setting, including the hat sliders, is remembered in the browser between visits
