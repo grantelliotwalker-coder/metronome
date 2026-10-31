@@ -206,10 +206,13 @@ def test_silent_bars(env):
 def test_sounds_exist(env):
     page = env.page(cfg())
     page.click("#pSound summary")
-    for name in ["click", "wood", "rim", "cowbell", "hat", "beep"]:
+    for name in ["click", "wood", "rim", "cowbell", "hat", "beep", "drums"]:
         page.select_option("#sound", name)
-    assert page.evaluate("window.__clicks.length") == 6, "each sound previews once"
-    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 6, "six distinct sounds"
+    assert page.evaluate("window.__clicks.length") == 8, "each sound previews once; drums plays kick then snare"
+    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 8, "all sounds, kick and snare are distinct"
+    assert page.locator("#soundHelp").is_visible(), "drum help is shown while Drum beat is selected"
+    page.select_option("#sound", "beep")
+    assert not page.locator("#soundHelp").is_visible()
 
 
 def test_presets_and_share_link(env):
@@ -627,6 +630,36 @@ def test_swipe_then_release_does_not_double_start(env):
         near(d, 0.25, 1e-4, "one steady stream, not two overlapping starts")
 
 
+def test_drum_beat_backbeat(env):
+    page, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums"), 2.3)
+    b = [x["buf"] for x in c[:8]]
+    assert b[0] == b[2] == b[4] == b[6] and b[1] == b[3] == b[5] == b[7] and b[0] != b[1], f"kick snare kick snare: {b}"
+    for d in diffs([x["t"] for x in c[:8]]):
+        near(d, 0.25, 1e-4, "drum beats sit on the grid")
+    page.reload(); page.wait_for_timeout(300)      # the setting survives a reload
+    assert page.input_value("#sound") == "drums"
+
+
+def test_drum_beat_waltz_compound_and_hats(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=3, sound="drums"), 1.6)
+    b = [x["buf"] for x in c[:3]]
+    assert b[1] == b[2] and b[0] != b[1], f"3/4 is kick snare snare: {b}"
+    _, c = env.run_clicks(cfg(bpm=240, num=6, den=8, sound="drums"), 1.9)
+    b = [x["buf"] for x in c[:6]]
+    assert b[1] == b[2] == b[4] == b[5] and len({b[0], b[3], b[1]}) == 3, f"6/8 is kick hat hat snare hat hat: {b}"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sub=2, sound="drums"), 2.3)
+    b = [x["buf"] for x in c[:8]]
+    assert b[1] == b[3] == b[5] == b[7] and b[0] == b[4] and b[2] == b[6] and len({b[0], b[1], b[2]}) == 3, f"hats between: {b}"
+    near(c[1]["t"] - c[0]["t"], 0.125, 1e-4, "hat falls on the split")
+
+
+def test_drum_beat_respects_accents_and_mutes(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, acc=[2, 0, 1, 1], sound="drums"), 2.3)
+    ds = diffs([x["t"] for x in c[:4]])
+    near(ds[0], 0.5, 1e-4); near(ds[1], 0.25, 1e-4)
+    assert c[0]["buf"] == c[1]["buf"], "beat 3 (kick) after a muted snare"
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -640,6 +673,7 @@ ORDER = [
     test_swipe_while_audio_locked_shows_gate_that_swallows_the_tap, test_gate_remembers_swipe_direction_and_escape_cancels,
     test_any_tap_unlocks_audio_before_start, test_start_button_works_even_if_audio_was_locked,
     test_tap_pendulum_starts_without_any_message, test_swipe_then_release_does_not_double_start,
+    test_drum_beat_backbeat, test_drum_beat_waltz_compound_and_hats, test_drum_beat_respects_accents_and_mutes,
 ]
 
 

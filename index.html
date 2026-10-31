@@ -271,10 +271,12 @@ dialog .help{margin:10px 0 0}
             <option value="cowbell">Cowbell</option>
             <option value="hat">Hi-hat</option>
             <option value="beep">Beep</option>
+            <option value="drums">Drum beat</option>
           </select>
         </label>
         <label class="field">Volume<input type="range" id="vol" min="0" max="100" value="80"></label>
       </div>
+      <p class="help" id="soundHelp" hidden>Drum beat plays a kick and snare backbeat that follows your time signature. Split each beat into 2 to add hi-hat eighths.</p>
       <label class="check" id="hapticRow"><input type="checkbox" id="haptics"> Vibrate on each beat</label>
       <label class="field">Visual delay <output id="syncOut">0 ms</output>
         <input type="range" id="sync" min="0" max="500" step="5" value="0">
@@ -363,7 +365,7 @@ dialog .help{margin:10px 0 0}
 
   var MIN_BPM = 20, MAX_BPM = 300, LOOKAHEAD = 0.12, TICK_MS = 25;
   var KEY = 'metronome.v3', OLD_KEY = 'metronome.v2', PRESET_KEY = 'metronome.presets';
-  var SOUNDS = ['click', 'wood', 'rim', 'cowbell', 'hat', 'beep'];
+  var SOUNDS = ['click', 'wood', 'rim', 'cowbell', 'hat', 'beep', 'drums'];
   var DEN_NAMES = { 2: 'half notes', 4: 'quarter notes', 8: 'eighth notes', 16: 'sixteenth notes' };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -568,6 +570,15 @@ dialog .help{margin:10px 0 0}
       var nz = rnd(), hp = nz - prev; prev = nz;
       return hp * Math.exp(-t * 60);
     });
+    var ph = 0, sp = 0;
+    buffers.kick = make(0.32, function (t) {
+      ph += TAU * (45 + 110 * Math.exp(-t * 30)) / sr;           // pitch drops from about 155 Hz to 45 Hz
+      return Math.sin(ph) * Math.exp(-t * 9) + rnd() * 0.25 * Math.exp(-t * 400);
+    });
+    buffers.snare = make(0.24, function (t) {
+      var nz = rnd(), bright = nz - sp * 0.6; sp = nz;
+      return Math.sin(TAU * 185 * t) * Math.exp(-t * 28) * 0.55 + bright * Math.exp(-t * 20);
+    });
     buffers.beep = make(0.14, function (t) {
       return Math.sin(TAU * 1000 * t) * Math.min(1, t / 0.004) * Math.exp(-t * 28);
     });
@@ -582,6 +593,33 @@ dialog .help{margin:10px 0 0}
     g.gain.value = GAIN[kind];
     src.connect(g); g.connect(master);
     src.start(time);
+  }
+  // Drum beat: a backbeat that follows the time signature. 4/4 is kick snare kick snare; 3/4 is kick snare snare;
+  // compound meters (6/8, 9/8, 12/8) put kick and snare on the dotted-quarter groups with quiet hats between.
+  var DRUM_GAIN = { kick: 1, snare: 0.9, hat: 0.5 };
+  function drumPart(idx, num, den) {
+    if (den === 8 && num % 3 === 0 && num >= 6) return idx % 3 !== 0 ? 'hat' : ((idx / 3) % 2 === 0 ? 'kick' : 'snare');
+    if (num === 3) return idx === 0 ? 'kick' : 'snare';
+    return idx % 2 === 0 ? 'kick' : 'snare';
+  }
+  function playDrum(time, part, lvl) {
+    var src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buffers[part];
+    g.gain.value = DRUM_GAIN[part] * (lvl === 2 ? 1 : 0.8);
+    src.connect(g); g.connect(master);
+    src.start(time);
+  }
+  function playBeat(time, lvl, idx) {
+    if (state.sound === 'drums') playDrum(time, drumPart(idx, curNum, state.den), lvl);
+    else play(time, lvl === 2 ? 'accent' : 'beat', state.sound);
+  }
+  function playSub(time) {
+    if (state.sound === 'drums') playDrum(time, 'hat', 1);
+    else play(time, 'sub', state.sound);
+  }
+  function playTest(time) {                                      // preview and calibration sound
+    if (state.sound === 'drums') playDrum(time, 'snare', 2);
+    else play(time, 'accent', state.sound);
   }
   function polyVoice() { return state.sound === 'cowbell' ? 'wood' : 'cowbell'; }
 
@@ -784,10 +822,10 @@ dialog .help{margin:10px 0 0}
         }
         var lvl = state.acc[beatIdx]; if (lvl === undefined) lvl = beatIdx === 0 ? 2 : 1;
         if (barCount && lvl === 0) lvl = 1;                     // the count-in is always audible
-        if (!barMuted && lvl > 0) play(nextTime, lvl === 2 ? 'accent' : 'beat', state.sound);
+        if (!barMuted && lvl > 0) playBeat(nextTime, lvl, beatIdx);
         queue.push({ time: nextTime, idx: beatIdx, dur: dur, n: beatCount++, lvl: lvl, muted: barMuted, count: barCount, bar: barNum });
       } else if (!barMuted && !barCount) {
-        play(nextTime, 'sub', state.sound);
+        playSub(nextTime);
       }
       var step;
       if (curSub === 2 && state.swing > 50) step = subIdx === 0 ? dur * state.swing / 100 : dur * (1 - state.swing / 100);
@@ -999,8 +1037,12 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- sound, feel, calibration ---------- */
   soundSel.addEventListener('change', function () {
-    state.sound = soundSel.value; save();
-    if (!playing && ensureAudio()) play(ctx.currentTime + 0.03, 'accent', state.sound);   // preview
+    state.sound = soundSel.value; save(); $('soundHelp').hidden = state.sound !== 'drums';
+    if (!playing && ensureAudio()) {                             // preview
+      var t0 = ctx.currentTime + 0.03;
+      if (state.sound === 'drums') { playDrum(t0, 'kick', 2); playDrum(t0 + 0.2, 'snare', 2); }
+      else play(t0, 'accent', state.sound);
+    }
   });
   volEl.addEventListener('input', function () { state.vol = +volEl.value; applyVolume(); save(); });
   $('haptics').addEventListener('change', function () { state.haptics = $('haptics').checked; save(); if (state.haptics && navigator.vibrate) navigator.vibrate(20); });
@@ -1021,7 +1063,7 @@ dialog .help{margin:10px 0 0}
     calReset('Listen and tap with each click.');
     cal.running = true; $('calStart').disabled = true;
     var t0 = ctx.currentTime + 0.6;
-    for (var i = 0; i < 12; i++) { var t = t0 + i * 0.6; play(t, 'accent', state.sound); cal.clicks.push(t); }
+    for (var i = 0; i < 12; i++) { var t = t0 + i * 0.6; playTest(t); cal.clicks.push(t); }
     cal.timer = setTimeout(calFinish, (0.6 + 12 * 0.6 + 0.8) * 1000);
   });
   $('calPad').addEventListener('pointerdown', function () {
@@ -1194,6 +1236,7 @@ dialog .help{margin:10px 0 0}
   function syncUI() {
     numSel.value = state.num; denSel.value = state.den; subSel.value = state.sub;
     swingAmt.value = state.swing; polySel.value = state.poly; soundSel.value = state.sound;
+    $('soundHelp').hidden = state.sound !== 'drums';
     $('countIn').value = state.countIn; volEl.value = state.vol;
     $('trOn').checked = state.trainer.on; $('trStep').value = state.trainer.step;
     $('trEvery').value = state.trainer.every; $('trMax').value = state.trainer.max;

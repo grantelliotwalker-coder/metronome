@@ -16,7 +16,7 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - **Cross-rhythm:** a second voice with 2 to 9 clicks per bar (3 against 4 and so on)
 
 ## Sound and feel
-- Six synthesized sounds: click, wood block, rimshot, cowbell, hi-hat, beep
+- Seven synthesized sounds: click, wood block, rimshot, cowbell, hi-hat, beep, and **Drum beat**, a kick and snare backbeat that follows the time signature (4/4 kick snare kick snare, 3/4 kick snare snare, 6/8 and other compound meters on dotted-quarter groups). Split each beat into 2 for hi-hat eighths
 - **Visual delay** slider plus **calibrate by tapping**, so the pendulum matches what you hear on Bluetooth speakers
 - Optional vibration on each beat (Android Chrome)
 
