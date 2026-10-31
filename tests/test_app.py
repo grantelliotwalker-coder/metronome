@@ -35,6 +35,18 @@ HOOK = """
 })();
 """
 
+# Emulates iPhone WebKit: the audio context stays suspended until we flip __allowResume (a real tap).
+LOCKED_AUDIO = """
+(function () {
+  window.__allowResume = false;
+  var Orig = window.AudioContext, resume = Orig.prototype.resume;
+  Orig.prototype.resume = function () { return window.__allowResume ? resume.call(this) : Promise.resolve(); };
+  var Locked = function (o) { var c = new Orig(o); c.suspend(); return c; };
+  Locked.prototype = Orig.prototype;
+  window.AudioContext = Locked;
+})();
+"""
+
 MIDI_MOCK = """
 (function () {
   window.__midi = [];
@@ -509,6 +521,45 @@ def test_touch_swipe_on_a_phone(env):
     page.click("#go")
 
 
+def test_swipe_while_audio_locked_asks_for_a_tap_then_runs(env):
+    page = env.page(cfg(bpm=240), init=(LOCKED_AUDIO,))
+    swipe(page, 90)                                     # first thing the user does is a swipe, as on iPhone
+    page.wait_for_timeout(700)
+    assert page.inner_text("#go") == "Stop"
+    assert page.evaluate("window.__ctx.state") == "suspended", "swipe cannot unlock audio"
+    assert page.locator("#unlock").is_visible(), "the user is told to tap"
+    a1 = arm_angle(page); t1 = page.evaluate("window.__ctx.currentTime"); page.wait_for_timeout(300)
+    assert page.evaluate("window.__ctx.currentTime") == t1 and arm_angle(page) == a1, "frozen until unlocked"
+    page.evaluate("window.__allowResume = true")        # the OS accepts a real tap
+    page.mouse.click(8, 500)                            # tap on empty space
+    page.wait_for_timeout(900)
+    assert page.evaluate("window.__ctx.state") == "running"
+    assert not page.locator("#unlock").is_visible(), "prompt disappears"
+    assert page.evaluate("window.__ctx.currentTime") > t1 + 0.3, "audio clock runs"
+    seen = {arm_angle(page)}
+    for _ in range(8):
+        page.wait_for_timeout(60); seen.add(arm_angle(page))
+    assert len(seen) > 4, "pendulum is swinging"
+    assert page.inner_text("#go") == "Stop"
+    ts = [x["t"] for x in clicks(page) if x["rate"] == 1.3 or x["rate"] == 1]
+    assert len(ts) > 4
+    page.click("#go")
+    assert not page.locator("#unlock").is_visible()
+
+
+def test_any_tap_unlocks_audio_before_start(env):
+    page = env.page(cfg(bpm=240), init=(LOCKED_AUDIO,))
+    assert not page.evaluate("!!window.__ctx"), "nothing created before any interaction"
+    page.evaluate("window.__allowResume = true")
+    page.mouse.click(8, 500)
+    page.wait_for_timeout(300)
+    assert page.evaluate("window.__ctx.state") == "running", "a tap anywhere unlocks audio"
+    swipe(page, 90)
+    page.wait_for_timeout(500)
+    assert page.inner_text("#go") == "Stop" and not page.locator("#unlock").is_visible(), "later swipe starts cleanly"
+    page.click("#go")
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -519,6 +570,7 @@ ORDER = [
     test_swipe_pendulum_to_start, test_swipe_left_starts_on_the_left, test_swipe_ignored_while_playing,
     test_time_signature_badge, test_badge_change_while_playing_and_keys_blocked,
     test_touch_swipe_on_a_phone,
+    test_swipe_while_audio_locked_asks_for_a_tap_then_runs, test_any_tap_unlocks_audio_before_start,
 ]
 
 

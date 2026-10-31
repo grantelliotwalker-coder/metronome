@@ -44,6 +44,7 @@ button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 .stage{position:relative;touch-action:pan-y;cursor:grab;background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:12px 12px 2px}
 .sig-badge{position:absolute;top:10px;left:12px;z-index:1;min-height:40px;padding:0 12px;border:0;border-radius:12px;background:none;color:var(--muted);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer}
 .sig-badge:active{background:var(--line)}
+.unlock{position:absolute;top:14px;right:14px;z-index:1;background:var(--brass);color:var(--brass-ink);border-radius:999px;padding:7px 14px;font-size:14px;font-weight:600;pointer-events:none}
 .sigpresets{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
 .btn[aria-pressed="true"]{background:var(--brass);color:var(--brass-ink);border-color:var(--brass)}
 svg.pendulum{display:block;width:100%;height:auto;max-height:30vh;max-height:30dvh;margin:0 auto}
@@ -151,6 +152,7 @@ dialog .help{margin:10px 0 0}
 <main id="app">
   <section class="stage" id="stageCard">
     <button class="sig-badge" id="sigBadge" type="button" aria-label="Time signature 4/4. Press to change.">4/4</button>
+    <div class="unlock" id="unlock" role="status" hidden>Tap anywhere to turn sound on</div>
     <svg class="pendulum" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <g id="arm">
         <line class="arm" x1="100" y1="232" x2="100" y2="34"/>
@@ -579,23 +581,62 @@ dialog .help{margin:10px 0 0}
 
   function applyVolume() { if (master) { var v = state.vol / 100; master.gain.value = v * v; } }
 
+  // iPhone and iPad: every browser there uses WebKit, which starts audio locked and only unlocks it from a
+  // real tap (a swipe does not count). Also, Web Audio is muted by the silent switch unless the page asks
+  // for "playback" audio, so we request that, with a silent looping <audio> as the older-iOS fallback.
+  var IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var keepAlive = null, unlockEl = $('unlock');
+
+  function showUnlock(on) { unlockEl.hidden = !on; }
+
+  function playKeepAlive() {
+    if (!IOS) return;
+    try {
+      if (navigator.audioSession && navigator.audioSession.type === 'playback') return;
+      if (!keepAlive) {
+        var n = 800, b = new ArrayBuffer(44 + n), v = new DataView(b);
+        var w = function (o, str) { for (var i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+        w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+        v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true);
+        v.setUint16(34, 8, true); w(36, 'data'); v.setUint32(40, n, true);
+        for (var i = 0; i < n; i++) v.setUint8(44 + i, 128);          // 8-bit silence
+        keepAlive = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+        keepAlive.loop = true;
+      }
+      var p = keepAlive.play(); if (p && p.catch) p.catch(noop);
+    } catch (e) {}
+  }
+  function stopKeepAlive() { try { if (keepAlive) keepAlive.pause(); } catch (e) {} }
+
   function ensureAudio() {
     if (!ctx) {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) { say('This browser does not support Web Audio.'); return false; }
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
       try { ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { ctx = new AC(); }
       master = ctx.createGain();
       master.connect(ctx.destination);
       applyVolume();
       buildBuffers();
-      // Chrome can suspend the context (autoplay policy, device change). Recover while playing.
+      // The browser can suspend the context (autoplay policy, phone call, device change).
       ctx.onstatechange = function () {
-        if (playing && ctx.state !== 'running') ctx.resume().catch(noop);
+        if (ctx.state === 'running') showUnlock(false);
+        else if (playing) ctx.resume().catch(noop);
       };
     }
     if (ctx.state !== 'running') ctx.resume().catch(noop);
     return true;
   }
+
+  // Any real tap or key press unlocks audio, so a later swipe-to-start already has sound.
+  function unlockAudio() {
+    if (!ctx) { if (!ensureAudio()) return; }
+    else if (ctx.state !== 'running') ctx.resume().catch(noop);
+    if (playing) playKeepAlive();
+  }
+  ['touchend', 'pointerup', 'click', 'keydown'].forEach(function (t) {
+    document.addEventListener(t, unlockAudio, { capture: true, passive: true });
+  });
 
   /* ---------- timer: a Web Worker, because Chrome throttles main-thread timers in hidden tabs ---------- */
   var workerSrc = 'var t=null;onmessage=function(e){clearInterval(t);t=null;' +
@@ -784,6 +825,11 @@ dialog .help{margin:10px 0 0}
     midiNext = nextTime;
     last = { time: nextTime, idx: 0, dur: 60 / state.bpm, n: 0, lvl: 2, muted: false, count: state.countIn > 0, bar: -state.countIn };
     renderTransport(); say('');
+    playKeepAlive();
+    // A swipe cannot unlock audio on iPhone. If it is still locked, ask for one tap and carry on from there.
+    if (ctx.state !== 'running') {
+      setTimeout(function () { if (playing && ctx.state !== 'running') showUnlock(true); }, 350);
+    }
     ticker.start(schedule); schedule();
     lockScreen();
     cancelAnimationFrame(raf); raf = requestAnimationFrame(draw);
@@ -791,7 +837,7 @@ dialog .help{margin:10px 0 0}
 
   function stop() {
     playing = false;
-    ticker.stop(); cancelAnimationFrame(raf); unlockScreen();
+    ticker.stop(); cancelAnimationFrame(raf); unlockScreen(); stopKeepAlive(); showUnlock(false);
     if (midi.on && midi.out) {
       try { if (midi.out.clear) midi.out.clear(); midi.out.send([0xFC]); } catch (e) {}
     }
