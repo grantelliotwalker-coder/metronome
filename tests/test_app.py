@@ -72,7 +72,7 @@ def serve():
 
 
 def cfg(**o):
-    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", hat=2, drum=[], countIn=0,
+    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", hat=2, drum=[], hatTone=50, hatDelay=0, countIn=0,
              trainer=dict(on=False, step=5, every=4, max=160), gap=dict(on=False, play=4, mute=1),
              vol=80, sync=0, haptics=False, midiOut="")
     s.update(o)
@@ -737,12 +737,13 @@ def test_edit_drum_per_beat(env):
 
 
 def test_drum_edits_travel_in_share_links(env):
-    page = env.page(cfg(num=3, sound="brushes", hat=3, drum=[None, "s", "h"]), grant=True)
+    page = env.page(cfg(num=3, sound="brushes", hat=3, drum=[None, "s", "h"], hatTone=80, hatDelay=25), grant=True)
     assert [page.locator("#beats .dot").nth(i).get_attribute("data-part") for i in range(3)] == ["K", "S", "H"]
     page.click("#pPresets summary"); page.click("#pLink")
     link = page.evaluate("navigator.clipboard.readText()")
     other = env.page(); other.goto(link); other.wait_for_timeout(300)
     assert other.input_value("#sound") == "brushes" and other.input_value("#hatRate") == "3"
+    assert other.input_value("#hatTone") == "80" and other.input_value("#hatDelay") == "25", "tone and timing travel too"
     assert [other.locator("#beats .dot").nth(i).get_attribute("data-part") for i in range(3)] == ["K", "S", "H"]
 
 
@@ -759,6 +760,53 @@ def test_drum_ui_adapts(env):
     assert not page.locator("#hatRow").is_visible() and not page.locator("#sub").is_disabled()
     assert "normal, accent, off" in page.inner_text("#dotNote")
     assert page.locator("#beats .dot").nth(0).get_attribute("data-part") is None, "letters only in drum kits"
+
+
+def test_hat_tone(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums"), 2.3)
+    beats, hats = split_drums(c)
+    assert {h["rate"] for h in hats} == {1.0} and {b["rate"] for b in beats} == {1.0}, "normal tone is unchanged"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hatTone=100), 2.3)
+    beats, hats = split_drums(c)
+    assert {h["rate"] for h in hats} == {1.52}, "brighter hats play faster"
+    assert {b["rate"] for b in beats} == {1.0}, "kick and snare keep their pitch"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="brushes", hatTone=0), 2.3)
+    _, hats = split_drums(c)
+    assert {h["rate"] for h in hats} == {0.66}, "darker hats play slower"
+
+
+def test_hat_timing_off_the_grid(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hatDelay=30), 2.3)
+    beats, hats = split_drums(c)
+    for d in diffs([x["t"] for x in beats[:8]]):
+        near(d, 0.25, 1e-4, "kick and snare stay on the grid")
+    ht = [h["t"] for h in hats]
+    for b in beats[:6]:
+        assert any(abs(h - (b["t"] + 0.030)) < 1e-4 for h in ht), "on-beat hat sits 30 ms behind"
+        assert any(abs(h - (b["t"] + 0.125 + 0.030)) < 1e-4 for h in ht), "off-beat hat sits 30 ms behind"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hatDelay=-20), 2.3)
+    beats, hats = split_drums(c)
+    ht = [h["t"] for h in hats]
+    for b in beats[1:6]:
+        assert any(abs(h - (b["t"] - 0.020)) < 1e-4 for h in ht), "negative timing plays the hat early"
+
+
+def test_hat_sliders_ui(env):
+    page = env.page(cfg(sound="drums"))
+    page.click("#pSound summary")
+    assert page.locator("#hatTone").is_visible() and page.locator("#hatDelay").is_visible()
+    assert page.inner_text("#hatToneOut") == "Normal" and page.inner_text("#hatDelayOut") == "On the grid"
+    page.eval_on_selector("#hatTone", "e => { e.value = 80; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+    page.eval_on_selector("#hatDelay", "e => { e.value = 25; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+    assert page.inner_text("#hatToneOut") == "Brighter" and page.inner_text("#hatDelayOut") == "25 ms behind"
+    page.eval_on_selector("#hatTone", "e => { e.value = 20; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+    page.eval_on_selector("#hatDelay", "e => { e.value = -15; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+    assert page.inner_text("#hatToneOut") == "Darker" and page.inner_text("#hatDelayOut") == "15 ms ahead"
+    page.reload(); page.wait_for_timeout(300)
+    assert page.input_value("#hatTone") == "20" and page.input_value("#hatDelay") == "-15", "saved across reloads"
+    page.click("#pSound summary")
+    page.select_option("#sound", "click")
+    assert not page.locator("#hatTone").is_visible() and not page.locator("#hatDelay").is_visible()
 
 
 ORDER = [
@@ -778,6 +826,7 @@ ORDER = [
     test_drum_beat_respects_accents_and_mutes,
     test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_edit_drum_per_beat,
     test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
+    test_hat_tone, test_hat_timing_off_the_grid, test_hat_sliders_ui,
 ]
 
 

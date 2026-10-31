@@ -19,6 +19,8 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - Eight synthesized sounds: click, wood block, rimshot, cowbell, hi-hat, beep, **Drum beat** and a softer **Brush kit**
 - **Drum kits** play a backbeat that follows the time signature (4/4 kick snare kick snare, 3/4 kick snare snare, 6/8 and other compound meters on dotted-quarter groups). **Tap any beat dot to change its drum**: kick, snare, hi-hat or off
 - **Hi-hat setting** with its own rate: off, on the beats, eighths, triplets or sixteenths (swing applies to eighth hats)
+- **Hat tone** (darker to brighter) and **Hat timing** (40 ms ahead to 80 ms behind) sliders to loosen the hats off the grid; kick and snare stay put
+- Every setting, including the hat sliders, is remembered in the browser between visits
 - **Visual delay** slider plus **calibrate by tapping**, so the pendulum matches what you hear on Bluetooth speakers
 - Optional vibration on each beat (Android Chrome)
 

@@ -82,6 +82,7 @@ input[type=range]{width:100%;accent-color:var(--brass);height:32px;margin:0}
 .dot.on::before{background:var(--ink);border-color:var(--ink);transform:scale(1.2)}
 .dot.lvl2.on::before{background:var(--brass);border-color:var(--brass)}
 .dot.lvl0.on::before{background:transparent;border:2px solid var(--ink)}
+.hatrow{display:grid;gap:14px}
 .dot::before,.dot::after{grid-area:1/1}
 .dot[data-part]::after{content:attr(data-part);font-size:11px;font-weight:700;color:var(--muted);pointer-events:none}
 .dot.on[data-part]::after{color:var(--bg)}
@@ -283,15 +284,24 @@ dialog .help{margin:10px 0 0}
         <label class="field">Volume<input type="range" id="vol" min="0" max="100" value="80"></label>
       </div>
       <p class="help" id="soundHelp" hidden>Kick and snare follow your time signature. Tap a beat dot to change its drum: kick, snare, hi-hat or off.</p>
-      <label class="field" id="hatRow" hidden>Hi-hat
-        <select id="hatRate">
-          <option value="0">Off</option>
-          <option value="1">On the beats</option>
-          <option value="2">Eighths</option>
-          <option value="3">Triplets</option>
-          <option value="4">Sixteenths</option>
-        </select>
-      </label>
+      <div class="hatrow" id="hatRow" hidden>
+        <label class="field">Hi-hat
+          <select id="hatRate">
+            <option value="0">Off</option>
+            <option value="1">On the beats</option>
+            <option value="2">Eighths</option>
+            <option value="3">Triplets</option>
+            <option value="4">Sixteenths</option>
+          </select>
+        </label>
+        <label class="field">Hat tone <output id="hatToneOut">Normal</output>
+          <input type="range" id="hatTone" min="0" max="100" step="1" value="50">
+        </label>
+        <label class="field">Hat timing <output id="hatDelayOut">On the grid</output>
+          <input type="range" id="hatDelay" min="-40" max="80" step="1" value="0">
+        </label>
+        <p class="help">Tone makes the hats darker or brighter. Timing pushes them ahead of or behind the beat for a looser feel.</p>
+      </div>
       <label class="check" id="hapticRow"><input type="checkbox" id="haptics"> Vibrate on each beat</label>
       <label class="field">Visual delay <output id="syncOut">0 ms</output>
         <input type="range" id="sync" min="0" max="500" step="5" value="0">
@@ -390,7 +400,7 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- state ---------- */
   var state = {
-    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click', hat: 2, drum: [],
+    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click', hat: 2, drum: [], hatTone: 50, hatDelay: 0,
     countIn: 0,
     trainer: { on: false, step: 5, every: 4, max: 160 },
     gap: { on: false, play: 4, mute: 1 },
@@ -401,7 +411,7 @@ dialog .help{margin:10px 0 0}
   // Musical settings travel with presets and share links; the rest is per device.
   function musical() {
     return { bpm: state.bpm, num: state.num, den: state.den, acc: state.acc.slice(), sub: state.sub,
-             swing: state.swing, poly: state.poly, sound: state.sound, hat: state.hat, drum: state.drum.slice(), countIn: state.countIn,
+             swing: state.swing, poly: state.poly, sound: state.sound, hat: state.hat, drum: state.drum.slice(), hatTone: state.hatTone, hatDelay: state.hatDelay, countIn: state.countIn,
              trainer: { on: state.trainer.on, step: state.trainer.step, every: state.trainer.every, max: state.trainer.max },
              gap: { on: state.gap.on, play: state.gap.play, mute: state.gap.mute } };
   }
@@ -415,6 +425,8 @@ dialog .help{margin:10px 0 0}
     if (s.poly >= 2 && s.poly <= 9) state.poly = s.poly | 0; else if (s.poly === 0) state.poly = 0;
     if (SOUNDS.indexOf(s.sound) >= 0) state.sound = s.sound;
     if (s.hat >= 0 && s.hat <= 4) state.hat = s.hat | 0;
+    if (s.hatTone >= 0 && s.hatTone <= 100) state.hatTone = +s.hatTone;
+    if (s.hatDelay >= -40 && s.hatDelay <= 80) state.hatDelay = +s.hatDelay;
     if (s.countIn >= 0 && s.countIn <= 2) state.countIn = s.countIn | 0;
     var t = s.trainer;
     if (t && typeof t === 'object') {
@@ -666,6 +678,10 @@ dialog .help{margin:10px 0 0}
     var kit = KITS[state.sound] || KITS.drums;
     var src = ctx.createBufferSource(), g = ctx.createGain();
     src.buffer = buffers[kit.prefix + name];
+    if (name === 'hat') {
+      src.playbackRate.value = Math.pow(2, (state.hatTone - 50) / 50 * 0.6);   // tone: about a seventh down to a seventh up
+      time += state.hatDelay / 1000;                                         // timing: off the grid, early or late
+    }
     g.gain.value = kit.gain[name] * (lvl === 2 ? 1 : 0.8);
     src.connect(g); g.connect(master);
     src.start(time);
@@ -1083,9 +1099,19 @@ dialog .help{margin:10px 0 0}
     subSel.disabled = d;                                          // drum kits use the Hi-hat setting instead
     $('dotNote').textContent = d ? 'Tap a beat to change its drum: kick, snare, hi-hat, off.'
                                  : 'Tap a beat to change it: normal, accent, off.';
-    refreshSwing(); refreshDots();
+    hatTexts(); refreshSwing(); refreshDots();
   }
   $('hatRate').addEventListener('change', function () { state.hat = +$('hatRate').value; refreshSwing(); save(); });
+  function hatTexts() {
+    var t = state.hatTone, d = state.hatDelay;
+    $('hatToneOut').textContent = t === 50 ? 'Normal' : (t < 50 ? 'Darker' : 'Brighter');
+    $('hatDelayOut').textContent = d === 0 ? 'On the grid' : (d > 0 ? d + ' ms behind' : (-d) + ' ms ahead');
+  }
+  $('hatTone').addEventListener('input', function () { state.hatTone = +$('hatTone').value; hatTexts(); save(); });
+  $('hatTone').addEventListener('change', function () {                    // hear the new tone when you let go
+    if (!playing && ensureAudio()) playDrum(ctx.currentTime + 0.03, 'h', 1);
+  });
+  $('hatDelay').addEventListener('input', function () { state.hatDelay = +$('hatDelay').value; hatTexts(); save(); });
   function setMeter(num, den) {
     if (num !== state.num || den !== state.den) state.drum = [];
     state.num = clamp(num | 0, 1, 16); state.den = den;
@@ -1319,7 +1345,7 @@ dialog .help{margin:10px 0 0}
   function syncUI() {
     numSel.value = state.num; denSel.value = state.den; subSel.value = state.sub;
     swingAmt.value = state.swing; polySel.value = state.poly; soundSel.value = state.sound;
-    $('hatRate').value = state.hat;
+    $('hatRate').value = state.hat; $('hatTone').value = state.hatTone; $('hatDelay').value = state.hatDelay;
     $('countIn').value = state.countIn; volEl.value = state.vol;
     $('trOn').checked = state.trainer.on; $('trStep').value = state.trainer.step;
     $('trEvery').value = state.trainer.every; $('trMax').value = state.trainer.max;
