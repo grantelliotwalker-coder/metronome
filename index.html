@@ -314,11 +314,11 @@ dialog .help{margin:10px 0 0}
     </div>
   </details>
 
-  <p class="hint">Swipe the pendulum to start. Space start or stop. Up and Down change tempo (Shift for 10). T taps tempo. S opens stage mode.</p>
+  <p class="hint">Tap or swipe the pendulum to start. Space start or stop. Up and Down change tempo (Shift for 10). T taps tempo. S opens stage mode.</p>
 </main>
 
 <div class="gate" id="gate" role="dialog" aria-modal="true" aria-label="Turn sound on" hidden>
-  <div class="gate-card"><span id="gateText">Tap to turn sound on</span><small id="gateSub">Then the metronome starts.</small></div>
+  <div class="gate-card"><span id="gateText">Tap to start</span><small id="gateSub">iPhone needs a tap before it will play sound.</small></div>
 </div>
 
 <div class="stageview" id="stageView" role="dialog" aria-modal="true" aria-label="Stage mode">
@@ -657,8 +657,8 @@ dialog .help{margin:10px 0 0}
   }
   function showGate(dir) {
     gateDir = dir;
-    $('gateText').textContent = 'Tap to turn sound on';
-    $('gateSub').textContent = 'Then the metronome starts.';
+    $('gateText').textContent = 'Tap to start';
+    $('gateSub').textContent = 'iPhone needs a tap before it will play sound. Tap the pendulum next time to skip this.';
     gate.hidden = false;
   }
   function hideGate() { gate.hidden = true; }
@@ -1121,14 +1121,22 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- swipe the pendulum to start ---------- */
   (function () {
-    var card = $('stageCard'), startX = 0, startY = 0, active = false, SWIPE = 40;
+    var card = $('stageCard'), startX = 0, startY = 0, active = false, moved = false, SWIPE = 40;
     card.addEventListener('pointerdown', function (e) {
+      moved = false;
       if (playing || e.target.closest('.sig-badge')) return;
       active = true; startX = e.clientX; startY = e.clientY;
       card.setPointerCapture(e.pointerId);
     });
     card.addEventListener('pointermove', function (e) {
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) > 10) moved = true;
       if (active) setAngle(clamp((e.clientX - startX) * 0.55, -22, 22));   // the arm follows your finger
+    });
+    // A plain tap on the pendulum also starts it. A tap is the one gesture iPhone accepts for turning sound on,
+    // so this starts instantly with no extra message.
+    card.addEventListener('click', function (e) {
+      if (playing || moved || e.target.closest('.sig-badge')) return;
+      start();
     });
     function end(e, cancelled) {
       if (!active) return;

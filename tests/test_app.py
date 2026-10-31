@@ -600,6 +600,33 @@ def test_start_button_works_even_if_audio_was_locked(env):
     page.click("#go")
 
 
+def test_tap_pendulum_starts_without_any_message(env):
+    page = env.page(cfg(bpm=100), init=(LOCKED_AUDIO,))
+    page.evaluate("window.__allowResume = true")       # a real tap is accepted
+    box = page.locator("#stageCard").bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.6)
+    page.wait_for_timeout(500)
+    assert page.inner_text("#go") == "Stop", "a tap on the pendulum starts it"
+    assert not page.locator("#gate").is_visible(), "no gate when the first touch is a tap"
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.6)
+    page.wait_for_timeout(200)
+    assert page.inner_text("#go") == "Stop", "tapping while playing does not stop it"
+    page.click("#go")
+    page.mouse.click(box["x"] + 30, box["y"] + 22)     # the badge opens the dialog and does not start
+    assert page.evaluate("document.getElementById('sigDlg').open") and page.inner_text("#go") == "Start"
+    page.keyboard.press("Escape")
+
+
+def test_swipe_then_release_does_not_double_start(env):
+    page = env.page(cfg(bpm=240))
+    swipe(page, 90)                                      # a mouse drag also fires a click on release
+    page.wait_for_timeout(1100)
+    page.click("#go")
+    ts = [x["t"] for x in clicks(page) if x["rate"] in (1.3, 1)]
+    for d in diffs(ts[:6]):
+        near(d, 0.25, 1e-4, "one steady stream, not two overlapping starts")
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -612,6 +639,7 @@ ORDER = [
     test_touch_swipe_on_a_phone,
     test_swipe_while_audio_locked_shows_gate_that_swallows_the_tap, test_gate_remembers_swipe_direction_and_escape_cancels,
     test_any_tap_unlocks_audio_before_start, test_start_button_works_even_if_audio_was_locked,
+    test_tap_pendulum_starts_without_any_message, test_swipe_then_release_does_not_double_start,
 ]
 
 
