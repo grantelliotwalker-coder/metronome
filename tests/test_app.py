@@ -879,6 +879,18 @@ def test_site_header_links_home(env):
     assert page.locator(".logo").is_visible()
 
 
+def test_hats_only_in_drum_kits(env):
+    kit = {"kick", "snare", "hat", "bkick", "bsnare", "bhat", "bsweep"}
+    for snd in ["click", "wood", "rim", "cowbell", "beep"]:
+        _, c = env.run_clicks(cfg(bpm=240, sound=snd, hat=4, sweep=True, swing=62), 1.2)
+        assert {x["name"] for x in c} == {snd}, f"{snd} plays only itself, no hats or sweep"
+    page = env.page(cfg(bpm=240, sound="brushes", hat=4))
+    page.click("#go"); page.wait_for_timeout(700)
+    page.click("#pSound summary"); page.select_option("#sound", "click"); page.evaluate("window.__clicks = []")
+    page.wait_for_timeout(1200); page.click("#go")
+    assert not ({x["name"] for x in clicks(page)} & kit), "switching to Click while playing stops the hats at once"
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -897,7 +909,7 @@ ORDER = [
     test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_jazz_waltz_brushes, test_edit_drum_per_beat,
     test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
     test_hat_tone, test_hat_timing_off_the_grid, test_hat_sliders_ui,
-    test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,
+    test_hats_only_in_drum_kits, test_reset_to_defaults_with_undo, test_reset_while_playing_keeps_time, test_site_header_links_home,
 ]
 
 
