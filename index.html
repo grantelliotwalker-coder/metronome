@@ -82,6 +82,11 @@ input[type=range]{width:100%;accent-color:var(--brass);height:32px;margin:0}
 .dot.on::before{background:var(--ink);border-color:var(--ink);transform:scale(1.2)}
 .dot.lvl2.on::before{background:var(--brass);border-color:var(--brass)}
 .dot.lvl0.on::before{background:transparent;border:2px solid var(--ink)}
+.dot::before,.dot::after{grid-area:1/1}
+.dot[data-part]::after{content:attr(data-part);font-size:11px;font-weight:700;color:var(--muted);pointer-events:none}
+.dot.on[data-part]::after{color:var(--bg)}
+.dot.lvl2.on[data-part]::after{color:var(--brass-ink)}
+[hidden]{display:none !important}
 .dotnote{text-align:center;color:var(--muted);font-size:13px;margin:-8px 0 0}
 
 /* transport */
@@ -187,7 +192,7 @@ dialog .help{margin:10px 0 0}
   <input type="range" id="slider" min="20" max="300" value="100" aria-label="Tempo in beats per minute">
 
   <div class="beats" id="beats"></div>
-  <p class="dotnote">Tap a beat to change it: normal, accent, off.</p>
+  <p class="dotnote" id="dotNote">Tap a beat to change it: normal, accent, off.</p>
 
   <div class="transport">
     <button class="go" id="go" type="button">Start</button>
@@ -272,11 +277,21 @@ dialog .help{margin:10px 0 0}
             <option value="hat">Hi-hat</option>
             <option value="beep">Beep</option>
             <option value="drums">Drum beat</option>
+            <option value="brushes">Brush kit</option>
           </select>
         </label>
         <label class="field">Volume<input type="range" id="vol" min="0" max="100" value="80"></label>
       </div>
-      <p class="help" id="soundHelp" hidden>Drum beat plays a kick and snare backbeat with hi-hats on every eighth, and follows your time signature. Split each beat into 4 for sixteenth hats.</p>
+      <p class="help" id="soundHelp" hidden>Kick and snare follow your time signature. Tap a beat dot to change its drum: kick, snare, hi-hat or off.</p>
+      <label class="field" id="hatRow" hidden>Hi-hat
+        <select id="hatRate">
+          <option value="0">Off</option>
+          <option value="1">On the beats</option>
+          <option value="2">Eighths</option>
+          <option value="3">Triplets</option>
+          <option value="4">Sixteenths</option>
+        </select>
+      </label>
       <label class="check" id="hapticRow"><input type="checkbox" id="haptics"> Vibrate on each beat</label>
       <label class="field">Visual delay <output id="syncOut">0 ms</output>
         <input type="range" id="sync" min="0" max="500" step="5" value="0">
@@ -365,7 +380,7 @@ dialog .help{margin:10px 0 0}
 
   var MIN_BPM = 20, MAX_BPM = 300, LOOKAHEAD = 0.12, TICK_MS = 25;
   var KEY = 'metronome.v3', OLD_KEY = 'metronome.v2', PRESET_KEY = 'metronome.presets';
-  var SOUNDS = ['click', 'wood', 'rim', 'cowbell', 'hat', 'beep', 'drums'];
+  var SOUNDS = ['click', 'wood', 'rim', 'cowbell', 'hat', 'beep', 'drums', 'brushes'];
   var DEN_NAMES = { 2: 'half notes', 4: 'quarter notes', 8: 'eighth notes', 16: 'sixteenth notes' };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -375,7 +390,7 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- state ---------- */
   var state = {
-    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click',
+    bpm: 100, num: 4, den: 4, acc: defAcc(4), sub: 1, swing: 50, poly: 0, sound: 'click', hat: 2, drum: [],
     countIn: 0,
     trainer: { on: false, step: 5, every: 4, max: 160 },
     gap: { on: false, play: 4, mute: 1 },
@@ -386,7 +401,7 @@ dialog .help{margin:10px 0 0}
   // Musical settings travel with presets and share links; the rest is per device.
   function musical() {
     return { bpm: state.bpm, num: state.num, den: state.den, acc: state.acc.slice(), sub: state.sub,
-             swing: state.swing, poly: state.poly, sound: state.sound, countIn: state.countIn,
+             swing: state.swing, poly: state.poly, sound: state.sound, hat: state.hat, drum: state.drum.slice(), countIn: state.countIn,
              trainer: { on: state.trainer.on, step: state.trainer.step, every: state.trainer.every, max: state.trainer.max },
              gap: { on: state.gap.on, play: state.gap.play, mute: state.gap.mute } };
   }
@@ -399,6 +414,7 @@ dialog .help{margin:10px 0 0}
     if (s.swing >= 50 && s.swing <= 75) state.swing = +s.swing;
     if (s.poly >= 2 && s.poly <= 9) state.poly = s.poly | 0; else if (s.poly === 0) state.poly = 0;
     if (SOUNDS.indexOf(s.sound) >= 0) state.sound = s.sound;
+    if (s.hat >= 0 && s.hat <= 4) state.hat = s.hat | 0;
     if (s.countIn >= 0 && s.countIn <= 2) state.countIn = s.countIn | 0;
     var t = s.trainer;
     if (t && typeof t === 'object') {
@@ -419,6 +435,12 @@ dialog .help{margin:10px 0 0}
       acc.push(v === 0 || v === 1 || v === 2 ? v : (i === 0 ? 2 : 1));
     }
     state.acc = acc;
+    var drum = [];
+    for (i = 0; i < state.num; i++) {
+      var dv = Array.isArray(s.drum) ? s.drum[i] : null;
+      drum.push(dv === 'k' || dv === 's' || dv === 'h' ? dv : null);
+    }
+    state.drum = drum;
   }
 
   function load() {
@@ -511,6 +533,7 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- beat dots (tap to cycle accent level) ---------- */
   var LVL_NAMES = ['off', 'normal', 'accent'];
+  var PART_NAMES = { k: 'kick', s: 'snare', h: 'hi-hat' }, PART_LETTERS = { k: 'K', s: 'S', h: 'H' };
   function buildDots() {
     beatsEl.innerHTML = '';
     for (var i = 0; i < state.num; i++) {
@@ -522,18 +545,32 @@ dialog .help{margin:10px 0 0}
     refreshDots();
   }
   function refreshDots() {
-    var dots = beatsEl.children;
+    var dots = beatsEl.children, drums = isDrumKit();
     for (var i = 0; i < dots.length; i++) {
       var lvl = state.acc[i] === undefined ? 1 : state.acc[i];
       var on = dots[i].classList.contains('on');
       dots[i].className = 'dot lvl' + lvl + (on ? ' on' : '');
-      dots[i].setAttribute('aria-label', 'Beat ' + (i + 1) + ', ' + LVL_NAMES[lvl] + '. Press to change.');
+      var what = LVL_NAMES[lvl];
+      if (drums && lvl > 0) {
+        var part = partAt(i, state.num);
+        dots[i].dataset.part = PART_LETTERS[part]; what = PART_NAMES[part];
+      } else delete dots[i].dataset.part;
+      dots[i].setAttribute('aria-label', 'Beat ' + (i + 1) + ', ' + what + '. Press to change.');
     }
+  }
+  // In a drum kit a tap cycles the drum for that beat: kick, snare, hi-hat, off.
+  function cycleDrum(i) {
+    while (state.drum.length < state.num) state.drum.push(null);
+    var cur = state.acc[i] === 0 ? 'x' : partAt(i, state.num);
+    var next = { k: 's', s: 'h', h: 'x', x: 'k' }[cur];
+    if (next === 'x') state.acc[i] = 0;
+    else { state.drum[i] = next; if (state.acc[i] === 0) state.acc[i] = i === 0 ? 2 : 1; }
   }
   beatsEl.addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;
     var i = +b.dataset.i, cur = state.acc[i] === undefined ? 1 : state.acc[i];
-    state.acc[i] = cur === 1 ? 2 : (cur === 2 ? 0 : 1);   // normal, accent, off, normal ...
+    if (isDrumKit()) cycleDrum(i);
+    else state.acc[i] = cur === 1 ? 2 : (cur === 2 ? 0 : 1);   // normal, accent, off, normal ...
     refreshDots(); save();
   });
 
@@ -579,6 +616,19 @@ dialog .help{margin:10px 0 0}
       var nz = rnd(), bright = nz - sp * 0.6; sp = nz;
       return Math.sin(TAU * 185 * t) * Math.exp(-t * 28) * 0.55 + bright * Math.exp(-t * 20);
     });
+    var ph2 = 0, lp = 0, pb = 0;
+    buffers.bkick = make(0.34, function (t) {                    // brush kit: a soft thud with no beater click
+      ph2 += TAU * (50 + 70 * Math.exp(-t * 22)) / sr;
+      return Math.sin(ph2) * (1 - Math.exp(-t * 400)) * Math.exp(-t * 8);
+    });
+    buffers.bsnare = make(0.26, function (t) {                   // a brush swish: low-passed noise with a slow attack
+      lp += (rnd() - lp) * 0.5;
+      return lp * (1 - Math.exp(-t * 70)) * Math.exp(-t * 13);
+    });
+    buffers.bhat = make(0.12, function (t) {                     // a soft shaker-like tick
+      var nz = rnd(), hp = nz - pb; pb = nz;
+      return hp * (1 - Math.exp(-t * 260)) * Math.exp(-t * 38);
+    });
     buffers.beep = make(0.14, function (t) {
       return Math.sin(TAU * 1000 * t) * Math.min(1, t / 0.004) * Math.exp(-t * 28);
     });
@@ -594,33 +644,42 @@ dialog .help{margin:10px 0 0}
     src.connect(g); g.connect(master);
     src.start(time);
   }
-  // Drum beat: a backbeat that follows the time signature. 4/4 is kick snare kick snare; 3/4 is kick snare snare;
-  // compound meters (6/8, 9/8, 12/8) put kick and snare on the dotted-quarter groups with quiet hats between.
-  // Everywhere else a closed hi-hat plays on every eighth: under each beat and halfway between beats.
-  var DRUM_GAIN = { kick: 1, snare: 0.9, hat: 0.5 };
+  // Drum kits: a backbeat that follows the time signature (4/4 kick snare kick snare, 3/4 kick snare snare,
+  // compound meters such as 6/8 on dotted-quarter groups). Tapping a beat dot changes its drum. The hi-hat has
+  // its own rate setting: off, on the beats, eighths, triplets or sixteenths.
+  var KITS = {
+    drums:   { prefix: '',  gain: { kick: 1,   snare: 0.9, hat: 0.5 } },
+    brushes: { prefix: 'b', gain: { kick: 0.7, snare: 0.8, hat: 0.45 } }
+  };
+  function isDrumKit() { return state.sound === 'drums' || state.sound === 'brushes'; }
   function isCompound(num, den) { return den === 8 && num % 3 === 0 && num >= 6; }
   function drumPart(idx, num, den) {
-    if (isCompound(num, den)) return idx % 3 !== 0 ? 'hat' : ((idx / 3) % 2 === 0 ? 'kick' : 'snare');
-    if (num === 3) return idx === 0 ? 'kick' : 'snare';
-    return idx % 2 === 0 ? 'kick' : 'snare';
+    if (isCompound(num, den)) return idx % 3 !== 0 ? 'h' : ((idx / 3) % 2 === 0 ? 'k' : 's');
+    if (num === 3) return idx === 0 ? 'k' : 's';
+    return idx % 2 === 0 ? 'k' : 's';
   }
+  function partAt(idx, num) { return state.drum[idx] || drumPart(idx, num, state.den); }
+  var PART_BUF = { k: 'kick', s: 'snare', h: 'hat' };
   function playDrum(time, part, lvl) {
+    var name = PART_BUF[part] || part;
+    if (name === 'hat' && state.hat === 0) return;                // the hi-hat can be turned off entirely
+    var kit = KITS[state.sound] || KITS.drums;
     var src = ctx.createBufferSource(), g = ctx.createGain();
-    src.buffer = buffers[part];
-    g.gain.value = DRUM_GAIN[part] * (lvl === 2 ? 1 : 0.8);
+    src.buffer = buffers[kit.prefix + name];
+    g.gain.value = kit.gain[name] * (lvl === 2 ? 1 : 0.8);
     src.connect(g); g.connect(master);
     src.start(time);
   }
   function playBeat(time, lvl, idx) {
-    if (state.sound === 'drums') playDrum(time, drumPart(idx, curNum, state.den), lvl);
+    if (isDrumKit()) playDrum(time, partAt(idx, curNum), lvl);
     else play(time, lvl === 2 ? 'accent' : 'beat', state.sound);
   }
   function playSub(time) {
-    if (state.sound === 'drums') playDrum(time, 'hat', 1);
-    else play(time, 'sub', state.sound);
+    if (isDrumKit()) return;                                      // drum kits use the hi-hat setting instead
+    play(time, 'sub', state.sound);
   }
-  function playTest(time) {                                      // preview and calibration sound
-    if (state.sound === 'drums') playDrum(time, 'snare', 2);
+  function playTest(time) {                                       // preview and calibration sound
+    if (isDrumKit()) playDrum(time, 's', 2);
     else play(time, 'accent', state.sound);
   }
   function polyVoice() { return state.sound === 'cowbell' ? 'wood' : 'cowbell'; }
@@ -825,9 +884,15 @@ dialog .help{margin:10px 0 0}
         var lvl = state.acc[beatIdx]; if (lvl === undefined) lvl = beatIdx === 0 ? 2 : 1;
         if (barCount && lvl === 0) lvl = 1;                     // the count-in is always audible
         if (!barMuted && lvl > 0) playBeat(nextTime, lvl, beatIdx);
-        if (state.sound === 'drums' && !barMuted && !barCount && !isCompound(curNum, state.den)) {
-          if (lvl > 0) playDrum(nextTime, 'hat', lvl);                  // hat under the kick or snare
-          if (curSub === 1) playDrum(nextTime + dur / 2, 'hat', 1);     // off-beat hat (a split adds its own)
+        if (isDrumKit() && !barMuted && !barCount && state.hat > 0) {
+          var comp = isCompound(curNum, state.den);
+          if (!comp && lvl > 0 && partAt(beatIdx, curNum) !== 'h') playDrum(nextTime, 'h', lvl);   // hat under the beat
+          // Hats per beat. In compound meters the beats are already eighths, so only the faster rates add more.
+          var hn = comp ? (state.hat >= 3 ? 2 : 1) : state.hat;
+          for (var hk = 1; hk < hn; hk++) {
+            var frac = (hn === 2 && state.swing > 50) ? state.swing / 100 : hk / hn;
+            playDrum(nextTime + dur * frac, 'h', 1);
+          }
         }
         queue.push({ time: nextTime, idx: beatIdx, dur: dur, n: beatCount++, lvl: lvl, muted: barMuted, count: barCount, bar: barNum });
       } else if (!barMuted && !barCount) {
@@ -1006,11 +1071,23 @@ dialog .help{margin:10px 0 0}
 
   function swingText() { return state.swing <= 50 ? 'Straight' : state.swing + '%'; }
   function refreshSwing() {
+    var drums = isDrumKit(), ok = drums ? state.hat === 2 : state.sub === 2;
     $('swingOut').textContent = swingText();
-    swingAmt.disabled = state.sub !== 2;
-    $('swingHelp').hidden = state.sub === 2;
+    swingAmt.disabled = !ok;
+    $('swingHelp').hidden = ok;
+    $('swingHelp').textContent = drums ? 'Swing needs the hi-hat set to eighths.' : 'Swing needs each beat split into 2.';
   }
+  function refreshDrumUI() {
+    var d = isDrumKit();
+    $('hatRow').hidden = !d; $('soundHelp').hidden = !d;
+    subSel.disabled = d;                                          // drum kits use the Hi-hat setting instead
+    $('dotNote').textContent = d ? 'Tap a beat to change its drum: kick, snare, hi-hat, off.'
+                                 : 'Tap a beat to change it: normal, accent, off.';
+    refreshSwing(); refreshDots();
+  }
+  $('hatRate').addEventListener('change', function () { state.hat = +$('hatRate').value; refreshSwing(); save(); });
   function setMeter(num, den) {
+    if (num !== state.num || den !== state.den) state.drum = [];
     state.num = clamp(num | 0, 1, 16); state.den = den;
     var acc = [];
     for (var i = 0; i < state.num; i++) acc.push(state.acc[i] !== undefined ? state.acc[i] : (i === 0 ? 2 : 1));
@@ -1043,10 +1120,10 @@ dialog .help{margin:10px 0 0}
 
   /* ---------- sound, feel, calibration ---------- */
   soundSel.addEventListener('change', function () {
-    state.sound = soundSel.value; save(); $('soundHelp').hidden = state.sound !== 'drums';
+    state.sound = soundSel.value; save(); refreshDrumUI();
     if (!playing && ensureAudio()) {                             // preview
       var t0 = ctx.currentTime + 0.03;
-      if (state.sound === 'drums') { playDrum(t0, 'kick', 2); playDrum(t0 + 0.2, 'snare', 2); }
+      if (isDrumKit()) { playDrum(t0, 'k', 2); playDrum(t0 + 0.2, 's', 2); }
       else play(t0, 'accent', state.sound);
     }
   });
@@ -1242,13 +1319,13 @@ dialog .help{margin:10px 0 0}
   function syncUI() {
     numSel.value = state.num; denSel.value = state.den; subSel.value = state.sub;
     swingAmt.value = state.swing; polySel.value = state.poly; soundSel.value = state.sound;
-    $('soundHelp').hidden = state.sound !== 'drums';
+    $('hatRate').value = state.hat;
     $('countIn').value = state.countIn; volEl.value = state.vol;
     $('trOn').checked = state.trainer.on; $('trStep').value = state.trainer.step;
     $('trEvery').value = state.trainer.every; $('trMax').value = state.trainer.max;
     $('gapOn').checked = state.gap.on; $('gapPlay').value = state.gap.play; $('gapMute').value = state.gap.mute;
     $('haptics').checked = state.haptics; $('sync').value = state.sync; $('syncOut').textContent = state.sync + ' ms';
-    refreshSwing(); buildDots(); setBpm(state.bpm, true);
+    buildDots(); refreshDrumUI(); setBpm(state.bpm, true);
   }
 
   load();

@@ -72,7 +72,7 @@ def serve():
 
 
 def cfg(**o):
-    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", countIn=0,
+    s = dict(bpm=100, num=4, den=4, acc=None, sub=1, swing=50, poly=0, sound="click", hat=2, drum=[], countIn=0,
              trainer=dict(on=False, step=5, every=4, max=160), gap=dict(on=False, play=4, mute=1),
              vol=80, sync=0, haptics=False, midiOut="")
     s.update(o)
@@ -206,10 +206,10 @@ def test_silent_bars(env):
 def test_sounds_exist(env):
     page = env.page(cfg())
     page.click("#pSound summary")
-    for name in ["click", "wood", "rim", "cowbell", "hat", "beep", "drums"]:
+    for name in ["click", "wood", "rim", "cowbell", "hat", "beep", "drums", "brushes"]:
         page.select_option("#sound", name)
-    assert page.evaluate("window.__clicks.length") == 8, "each sound previews once; drums plays kick then snare"
-    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 8, "all sounds, kick and snare are distinct"
+    assert page.evaluate("window.__clicks.length") == 10, "each sound previews once; the two kits play kick then snare"
+    assert len({c["buf"] for c in page.evaluate("window.__clicks")}) == 10, "every sound, kick and snare is distinct"
     assert page.locator("#soundHelp").is_visible(), "drum help is shown while Drum beat is selected"
     page.select_option("#sound", "beep")
     assert not page.locator("#soundHelp").is_visible()
@@ -665,11 +665,11 @@ def test_drum_beat_waltz_and_compound(env):
 
 
 def test_drum_beat_sixteenth_hats(env):
-    _, c = env.run_clicks(cfg(bpm=240, num=4, sub=4, sound="drums"), 2.3)
+    _, c = env.run_clicks(cfg(bpm=240, num=4, hat=4, sound="drums"), 2.3)
     beats, hats = split_drums(c)
     t0 = beats[0]["t"]
     one_beat = sorted(h["t"] for h in hats if t0 - 1e-4 <= h["t"] < t0 + 0.25 - 1e-6)
-    assert len(one_beat) == 4, f"four hats per beat when split into 4: {one_beat}"
+    assert len(one_beat) == 4, f"four hats per beat at sixteenths: {one_beat}"
     for d in diffs(one_beat):
         near(d, 0.0625, 1e-4, "sixteenth spacing")
 
@@ -679,6 +679,86 @@ def test_drum_beat_respects_accents_and_mutes(env):
     beats, _ = split_drums(c)
     ds = diffs([x["t"] for x in beats[:3]])
     near(ds[0], 0.5, 1e-4, "muted snare is skipped"); near(ds[1], 0.25, 1e-4)
+
+
+def test_hat_rate_setting(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hat=0), 2.3)
+    assert len({x["buf"] for x in c}) == 2, "no hats when the hi-hat is off"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hat=1), 2.3)
+    beats, hats = split_drums(c)
+    assert all(any(abs(h["t"] - b["t"]) < 1e-4 for b in beats) for h in hats[:8]), "hats only on the beats"
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums", hat=3), 2.3)
+    beats, hats = split_drums(c)
+    t0 = beats[0]["t"]
+    one = sorted(h["t"] for h in hats if t0 - 1e-4 <= h["t"] < t0 + 0.25 - 1e-6)
+    assert len(one) == 3, f"triplet hats: {one}"
+    for d in diffs(one):
+        near(d, 0.25 / 3, 1e-4, "triplet spacing")
+    _, c = env.run_clicks(cfg(bpm=120, num=2, sound="drums", hat=2, swing=67), 2.3)
+    beats, hats = split_drums(c)
+    for b in beats[:4]:
+        assert any(abs(h["t"] - (b["t"] + 0.5 * 0.67)) < 1e-3 for h in hats), "swung off-beat hat"
+
+
+def test_split_is_ignored_by_drum_kits(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sub=4, sound="drums", hat=1), 2.3)
+    beats, hats = split_drums(c)
+    assert all(any(abs(h["t"] - b["t"]) < 1e-4 for b in beats) for h in hats[:8]), "Split each beat does not add hats"
+
+
+def test_brush_kit(env):
+    page, c = env.run_clicks(cfg(bpm=240, num=4, sound="brushes"), 2.3)
+    beats, hats = split_drums(c)
+    b = [x["buf"] for x in beats[:8]]
+    assert b[0] == b[2] == b[4] == b[6] and b[1] == b[3] == b[5] == b[7] and b[0] != b[1], f"same backbeat: {b}"
+    for d in diffs([x["t"] for x in beats[:8]]):
+        near(d, 0.25, 1e-4, "brush beats sit on the grid")
+    assert len(hats) >= 14, "brushes have hats too"
+    page.reload(); page.wait_for_timeout(300)
+    assert page.input_value("#sound") == "brushes"
+
+
+def test_edit_drum_per_beat(env):
+    page = env.page(cfg(bpm=240, num=3, sound="drums", hat=0))
+    dots = page.locator("#beats .dot")
+    part = lambda i: dots.nth(i).get_attribute("data-part")
+    assert [part(0), part(1), part(2)] == ["K", "S", "S"], "3/4 default is kick snare snare"
+    dots.nth(2).click(); assert part(2) == "H"
+    dots.nth(2).click(); assert part(2) is None and "lvl0" in dots.nth(2).get_attribute("class"), "off"
+    dots.nth(2).click(); assert part(2) == "K"
+    page.click("#go"); page.wait_for_timeout(2000); page.click("#go")
+    b = [x["buf"] for x in clicks(page)[:6]]
+    assert b[0] == b[2] == b[3] == b[5] and b[1] == b[4] and b[0] != b[1], f"kick snare kick, twice: {b}"
+    page.reload(); page.wait_for_timeout(300)
+    assert page.locator("#beats .dot").nth(2).get_attribute("data-part") == "K", "edits are saved"
+    page.click("#sigBadge"); page.click("#sigPresets button:has-text('4/4')")
+    parts = [page.locator("#beats .dot").nth(i).get_attribute("data-part") for i in range(4)]
+    assert parts == ["K", "S", "K", "S"], "a new meter starts from its default pattern"
+
+
+def test_drum_edits_travel_in_share_links(env):
+    page = env.page(cfg(num=3, sound="brushes", hat=3, drum=[None, "s", "h"]), grant=True)
+    assert [page.locator("#beats .dot").nth(i).get_attribute("data-part") for i in range(3)] == ["K", "S", "H"]
+    page.click("#pPresets summary"); page.click("#pLink")
+    link = page.evaluate("navigator.clipboard.readText()")
+    other = env.page(); other.goto(link); other.wait_for_timeout(300)
+    assert other.input_value("#sound") == "brushes" and other.input_value("#hatRate") == "3"
+    assert [other.locator("#beats .dot").nth(i).get_attribute("data-part") for i in range(3)] == ["K", "S", "H"]
+
+
+def test_drum_ui_adapts(env):
+    page = env.page(cfg(sound="drums", hat=2))
+    page.click("#pSound summary"); page.click("#pRhythm summary")
+    assert page.locator("#hatRow").is_visible() and page.locator("#soundHelp").is_visible()
+    assert page.locator("#sub").is_disabled(), "Split each beat is replaced by the Hi-hat setting"
+    assert not page.locator("#swingAmt").is_disabled(), "swing works on eighth hats"
+    assert "Tap a beat to change its drum" in page.inner_text("#dotNote")
+    page.select_option("#hatRate", "3")
+    assert page.locator("#swingAmt").is_disabled()
+    page.select_option("#sound", "click")
+    assert not page.locator("#hatRow").is_visible() and not page.locator("#sub").is_disabled()
+    assert "normal, accent, off" in page.inner_text("#dotNote")
+    assert page.locator("#beats .dot").nth(0).get_attribute("data-part") is None, "letters only in drum kits"
 
 
 ORDER = [
@@ -696,6 +776,8 @@ ORDER = [
     test_tap_pendulum_starts_without_any_message, test_swipe_then_release_does_not_double_start,
     test_drum_beat_backbeat_with_hats, test_drum_beat_waltz_and_compound, test_drum_beat_sixteenth_hats,
     test_drum_beat_respects_accents_and_mutes,
+    test_hat_rate_setting, test_split_is_ignored_by_drum_kits, test_brush_kit, test_edit_drum_per_beat,
+    test_drum_edits_travel_in_share_links, test_drum_ui_adapts,
 ]
 
 
