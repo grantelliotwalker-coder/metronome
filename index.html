@@ -276,7 +276,7 @@ dialog .help{margin:10px 0 0}
         </label>
         <label class="field">Volume<input type="range" id="vol" min="0" max="100" value="80"></label>
       </div>
-      <p class="help" id="soundHelp" hidden>Drum beat plays a kick and snare backbeat that follows your time signature. Split each beat into 2 to add hi-hat eighths.</p>
+      <p class="help" id="soundHelp" hidden>Drum beat plays a kick and snare backbeat with hi-hats on every eighth, and follows your time signature. Split each beat into 4 for sixteenth hats.</p>
       <label class="check" id="hapticRow"><input type="checkbox" id="haptics"> Vibrate on each beat</label>
       <label class="field">Visual delay <output id="syncOut">0 ms</output>
         <input type="range" id="sync" min="0" max="500" step="5" value="0">
@@ -596,9 +596,11 @@ dialog .help{margin:10px 0 0}
   }
   // Drum beat: a backbeat that follows the time signature. 4/4 is kick snare kick snare; 3/4 is kick snare snare;
   // compound meters (6/8, 9/8, 12/8) put kick and snare on the dotted-quarter groups with quiet hats between.
+  // Everywhere else a closed hi-hat plays on every eighth: under each beat and halfway between beats.
   var DRUM_GAIN = { kick: 1, snare: 0.9, hat: 0.5 };
+  function isCompound(num, den) { return den === 8 && num % 3 === 0 && num >= 6; }
   function drumPart(idx, num, den) {
-    if (den === 8 && num % 3 === 0 && num >= 6) return idx % 3 !== 0 ? 'hat' : ((idx / 3) % 2 === 0 ? 'kick' : 'snare');
+    if (isCompound(num, den)) return idx % 3 !== 0 ? 'hat' : ((idx / 3) % 2 === 0 ? 'kick' : 'snare');
     if (num === 3) return idx === 0 ? 'kick' : 'snare';
     return idx % 2 === 0 ? 'kick' : 'snare';
   }
@@ -823,6 +825,10 @@ dialog .help{margin:10px 0 0}
         var lvl = state.acc[beatIdx]; if (lvl === undefined) lvl = beatIdx === 0 ? 2 : 1;
         if (barCount && lvl === 0) lvl = 1;                     // the count-in is always audible
         if (!barMuted && lvl > 0) playBeat(nextTime, lvl, beatIdx);
+        if (state.sound === 'drums' && !barMuted && !barCount && !isCompound(curNum, state.den)) {
+          if (lvl > 0) playDrum(nextTime, 'hat', lvl);                  // hat under the kick or snare
+          if (curSub === 1) playDrum(nextTime + dur / 2, 'hat', 1);     // off-beat hat (a split adds its own)
+        }
         queue.push({ time: nextTime, idx: beatIdx, dur: dur, n: beatCount++, lvl: lvl, muted: barMuted, count: barCount, bar: barNum });
       } else if (!barMuted && !barCount) {
         playSub(nextTime);

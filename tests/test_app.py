@@ -630,34 +630,55 @@ def test_swipe_then_release_does_not_double_start(env):
         near(d, 0.25, 1e-4, "one steady stream, not two overlapping starts")
 
 
-def test_drum_beat_backbeat(env):
+def split_drums(c):
+    """Separate kick/snare from the hi-hat, which is the most common sound in a drum bar."""
+    from collections import Counter
+    hat = Counter(x["buf"] for x in c).most_common(1)[0][0]
+    return [x for x in c if x["buf"] != hat], [x for x in c if x["buf"] == hat]
+
+
+def test_drum_beat_backbeat_with_hats(env):
     page, c = env.run_clicks(cfg(bpm=240, num=4, sound="drums"), 2.3)
-    b = [x["buf"] for x in c[:8]]
+    beats, hats = split_drums(c)
+    b = [x["buf"] for x in beats[:8]]
     assert b[0] == b[2] == b[4] == b[6] and b[1] == b[3] == b[5] == b[7] and b[0] != b[1], f"kick snare kick snare: {b}"
-    for d in diffs([x["t"] for x in c[:8]]):
+    for d in diffs([x["t"] for x in beats[:8]]):
         near(d, 0.25, 1e-4, "drum beats sit on the grid")
-    page.reload(); page.wait_for_timeout(300)      # the setting survives a reload
-    assert page.input_value("#sound") == "drums"
+    ht = [h["t"] for h in hats]
+    for x in beats[:6]:
+        assert any(abs(h - x["t"]) < 1e-4 for h in ht), "a hat plays under every kick and snare"
+        assert any(abs(h - (x["t"] + 0.125)) < 1e-4 for h in ht), "and a hat plays between the beats"
+    page.reload(); page.wait_for_timeout(300)
+    assert page.input_value("#sound") == "drums", "the setting survives a reload"
 
 
-def test_drum_beat_waltz_compound_and_hats(env):
+def test_drum_beat_waltz_and_compound(env):
     _, c = env.run_clicks(cfg(bpm=240, num=3, sound="drums"), 1.6)
-    b = [x["buf"] for x in c[:3]]
+    beats, _ = split_drums(c)
+    b = [x["buf"] for x in beats[:3]]
     assert b[1] == b[2] and b[0] != b[1], f"3/4 is kick snare snare: {b}"
     _, c = env.run_clicks(cfg(bpm=240, num=6, den=8, sound="drums"), 1.9)
-    b = [x["buf"] for x in c[:6]]
+    in_bar = [x for x in c if x["t"] < c[0]["t"] + 1.5 - 1e-6]
+    assert len(in_bar) == 6, "compound meters already have hats on the eighths, so none are added"
+    b = [x["buf"] for x in in_bar]
     assert b[1] == b[2] == b[4] == b[5] and len({b[0], b[3], b[1]}) == 3, f"6/8 is kick hat hat snare hat hat: {b}"
-    _, c = env.run_clicks(cfg(bpm=240, num=4, sub=2, sound="drums"), 2.3)
-    b = [x["buf"] for x in c[:8]]
-    assert b[1] == b[3] == b[5] == b[7] and b[0] == b[4] and b[2] == b[6] and len({b[0], b[1], b[2]}) == 3, f"hats between: {b}"
-    near(c[1]["t"] - c[0]["t"], 0.125, 1e-4, "hat falls on the split")
+
+
+def test_drum_beat_sixteenth_hats(env):
+    _, c = env.run_clicks(cfg(bpm=240, num=4, sub=4, sound="drums"), 2.3)
+    beats, hats = split_drums(c)
+    t0 = beats[0]["t"]
+    one_beat = sorted(h["t"] for h in hats if t0 - 1e-4 <= h["t"] < t0 + 0.25 - 1e-6)
+    assert len(one_beat) == 4, f"four hats per beat when split into 4: {one_beat}"
+    for d in diffs(one_beat):
+        near(d, 0.0625, 1e-4, "sixteenth spacing")
 
 
 def test_drum_beat_respects_accents_and_mutes(env):
     _, c = env.run_clicks(cfg(bpm=240, num=4, acc=[2, 0, 1, 1], sound="drums"), 2.3)
-    ds = diffs([x["t"] for x in c[:4]])
-    near(ds[0], 0.5, 1e-4); near(ds[1], 0.25, 1e-4)
-    assert c[0]["buf"] == c[1]["buf"], "beat 3 (kick) after a muted snare"
+    beats, _ = split_drums(c)
+    ds = diffs([x["t"] for x in beats[:3]])
+    near(ds[0], 0.5, 1e-4, "muted snare is skipped"); near(ds[1], 0.25, 1e-4)
 
 
 ORDER = [
@@ -673,7 +694,8 @@ ORDER = [
     test_swipe_while_audio_locked_shows_gate_that_swallows_the_tap, test_gate_remembers_swipe_direction_and_escape_cancels,
     test_any_tap_unlocks_audio_before_start, test_start_button_works_even_if_audio_was_locked,
     test_tap_pendulum_starts_without_any_message, test_swipe_then_release_does_not_double_start,
-    test_drum_beat_backbeat, test_drum_beat_waltz_compound_and_hats, test_drum_beat_respects_accents_and_mutes,
+    test_drum_beat_backbeat_with_hats, test_drum_beat_waltz_and_compound, test_drum_beat_sixteenth_hats,
+    test_drum_beat_respects_accents_and_mutes,
 ]
 
 
