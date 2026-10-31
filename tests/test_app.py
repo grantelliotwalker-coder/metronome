@@ -393,6 +393,122 @@ def test_background_tab_keeps_time(env):
         near(d, 0.25, 1e-4, "no gaps while backgrounded")
 
 
+def arm_angle(page):
+    import re
+    return float(re.match(r"rotate\((-?[\d.]+)", page.get_attribute("#arm", "transform")).group(1))
+
+
+def swipe(page, dx, dy=0):
+    box = page.locator("#stageCard").bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.6
+    page.mouse.move(x, y); page.mouse.down()
+    page.mouse.move(x + dx / 2, y + dy / 2); page.mouse.move(x + dx, y + dy)
+    page.mouse.up()
+
+
+def test_swipe_pendulum_to_start(env):
+    page = env.page(cfg(bpm=100))
+    swipe(page, 20)                       # too short
+    page.wait_for_timeout(200)
+    assert page.inner_text("#go") == "Start", "a short drag does not start it"
+    assert page.get_attribute("#arm", "transform").startswith("rotate(0.00"), "arm springs back"
+    swipe(page, 8, 90)                    # mostly vertical (a scroll)
+    page.wait_for_timeout(200)
+    assert page.inner_text("#go") == "Start", "a vertical drag does not start it"
+    swipe(page, 90)
+    page.wait_for_timeout(250)
+    assert page.inner_text("#go") == "Stop", "a swipe right starts it"
+    assert arm_angle(page) > 5, "first swing is on the right"
+    page.click("#go")
+    assert page.inner_text("#go") == "Start"
+
+
+def test_swipe_left_starts_on_the_left(env):
+    page = env.page(cfg(bpm=100))
+    swipe(page, -90)
+    page.wait_for_timeout(250)
+    assert page.inner_text("#go") == "Stop"
+    assert arm_angle(page) < -5, "first swing is on the left"
+    page.click("#go")
+    page.click("#go"); page.wait_for_timeout(250)
+    assert arm_angle(page) > 5, "a normal start still begins on the right"
+    page.click("#go")
+
+
+def test_swipe_ignored_while_playing(env):
+    page = env.page(cfg(bpm=100))
+    page.click("#go"); page.wait_for_timeout(300)
+    swipe(page, 90)
+    page.wait_for_timeout(200)
+    assert page.inner_text("#go") == "Stop", "swiping while playing does not stop or restart it"
+    page.click("#go")
+
+
+def test_time_signature_badge(env):
+    page = env.page(cfg())
+    badge = page.locator("#sigBadge")
+    assert badge.inner_text() == "4/4"
+    page.click("#sigBadge")
+    assert page.evaluate("document.getElementById('sigDlg').open")
+    assert page.get_attribute("#sigPresets button:has-text('4/4')", "aria-pressed") == "true"
+    page.click("#sigPresets button:has-text('6/8')")
+    assert not page.evaluate("document.getElementById('sigDlg').open"), "a preset applies and closes"
+    assert badge.inner_text() == "6/8"
+    assert page.locator("#beats .dot").count() == 6
+    assert page.input_value("#num") == "6" and page.input_value("#den") == "8", "Rhythm panel stays in sync"
+    page.click("#sigBadge")
+    page.select_option("#sigNum", "5")
+    assert badge.inner_text() == "5/8" and page.locator("#beats .dot").count() == 5, "custom picker applies live"
+    page.select_option("#sigDen", "16")
+    assert badge.inner_text() == "5/16"
+    page.keyboard.press("Escape")
+    assert not page.evaluate("document.getElementById('sigDlg').open")
+    page.reload(); page.wait_for_timeout(300)
+    assert page.locator("#sigBadge").inner_text() == "5/16", "persists"
+
+
+def test_badge_change_while_playing_and_keys_blocked(env):
+    page = env.page(cfg(bpm=240))
+    page.click("#go"); page.wait_for_timeout(400)
+    page.click("#sigBadge")
+    assert page.evaluate("document.activeElement.id") == "sigDone", "focus starts on Done"
+    page.keyboard.press("ArrowUp"); page.keyboard.press("t")
+    assert page.inner_text("#bpmOut") == "240", "tempo keys are inert behind an open dialog"
+    page.click("#sigPresets button:has-text('3/4')")
+    page.wait_for_timeout(1500)
+    page.click("#go")
+    c = [x for x in clicks(page) if x["rate"] == 1.3]
+    ds = diffs([x["t"] for x in c])
+    assert any(abs(d - 0.75) < 1e-3 for d in ds), f"bars become 3 beats long: {ds}"
+
+
+def touch_swipe(page, dx, dy=0, steps=8):
+    box = page.locator("#stageCard").bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.6
+    cdp = page.context.new_cdp_session(page)
+    send = lambda t, pts: cdp.send("Input.dispatchTouchEvent", {"type": t, "touchPoints": pts})
+    send("touchStart", [{"x": x, "y": y, "id": 1}])
+    for i in range(1, steps + 1):
+        send("touchMove", [{"x": x + dx * i / steps, "y": y + dy * i / steps, "id": 1}])
+        page.wait_for_timeout(12)
+    send("touchEnd", [])
+
+
+def test_touch_swipe_on_a_phone(env):
+    page = env.page(cfg(bpm=100))
+    touch_swipe(page, 100)
+    page.wait_for_timeout(300)
+    assert page.inner_text("#go") == "Stop", "a finger swipe starts it"
+    page.click("#go")
+    touch_swipe(page, 5, 120)                 # a vertical finger drag is a scroll, not a start
+    page.wait_for_timeout(300)
+    assert page.inner_text("#go") == "Start", "vertical finger drag does not start it"
+    touch_swipe(page, -100)
+    page.wait_for_timeout(300)
+    assert page.inner_text("#go") == "Stop" and arm_angle(page) < -5
+    page.click("#go")
+
+
 ORDER = [
     test_basic_timing_and_accents, test_beat_accent_editing, test_time_signature_and_split, test_swing,
     test_count_in_and_polyrhythm, test_speed_trainer, test_silent_bars, test_sounds_exist,
@@ -400,6 +516,9 @@ ORDER = [
     test_dial_and_controls, test_tap_tempo, test_stage_mode, test_stage_mode_no_flash_with_reduced_motion,
     test_midi_clock, test_midi_hidden_without_support, test_calibration, test_pwa_and_offline,
     test_layout_fits_phones_and_landscape, test_background_tab_keeps_time,
+    test_swipe_pendulum_to_start, test_swipe_left_starts_on_the_left, test_swipe_ignored_while_playing,
+    test_time_signature_badge, test_badge_change_while_playing_and_keys_blocked,
+    test_touch_swipe_on_a_phone,
 ]
 
 

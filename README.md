@@ -21,6 +21,8 @@ A precise, installable metronome for the browser. No build step, no dependencies
 - Optional vibration on each beat (Android Chrome)
 
 ## Workflow
+- **Swipe the pendulum** left or right to start; the arm follows your finger and the first beat lands on the side you swiped
+- **Time signature badge** in the corner of the pendulum: tap it to pick 2/4, 3/4, 4/4, 5/4, 6/8, 7/8, 9/8, 12/8 or any custom signature
 - Tempo dial, +/- (hold to repeat), slider, tap tempo
 - **Presets** with previous/next for setlists, and a **share link** that carries all musical settings
 - **Stage mode:** huge beat number with a soft flash, full screen. Flashing stays at or below 3 per second and is off with reduced motion

@@ -41,7 +41,11 @@ button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 :focus-visible{outline:3px solid var(--brass);outline-offset:2px}
 
 /* pendulum */
-.stage{background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:12px 12px 2px}
+.stage{position:relative;touch-action:pan-y;cursor:grab;background:var(--panel);border:1px solid var(--line);border-radius:28px 28px 14px 14px;padding:12px 12px 2px}
+.sig-badge{position:absolute;top:10px;left:12px;z-index:1;min-height:40px;padding:0 12px;border:0;border-radius:12px;background:none;color:var(--muted);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer}
+.sig-badge:active{background:var(--line)}
+.sigpresets{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.btn[aria-pressed="true"]{background:var(--brass);color:var(--brass-ink);border-color:var(--brass)}
 svg.pendulum{display:block;width:100%;height:auto;max-height:30vh;max-height:30dvh;margin:0 auto}
 .body-fill{fill:var(--ink)}
 .arm{stroke:var(--brass);stroke-width:3;stroke-linecap:round}
@@ -116,6 +120,7 @@ details[open] summary::after{transform:rotate(-135deg)}
 dialog{border:1px solid var(--line);border-radius:20px;background:var(--panel);color:var(--ink);padding:20px;width:min(92vw,380px)}
 dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog h2{margin:0 0 8px;font-size:20px}
+dialog .help{margin:10px 0 0}
 .pad{width:100%;height:150px;border-radius:18px;border:2px solid var(--brass);background:var(--bg);font-size:20px;font-weight:700;margin:12px 0}
 .pad:active{background:var(--line)}
 
@@ -144,8 +149,9 @@ dialog h2{margin:0 0 8px;font-size:20px}
 </head>
 <body>
 <main id="app">
-  <section class="stage" aria-hidden="true">
-    <svg class="pendulum" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg">
+  <section class="stage" id="stageCard">
+    <button class="sig-badge" id="sigBadge" type="button" aria-label="Time signature 4/4. Press to change.">4/4</button>
+    <svg class="pendulum" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <g id="arm">
         <line class="arm" x1="100" y1="232" x2="100" y2="34"/>
         <rect id="weight" class="weight" x="88" y="110" width="24" height="22" rx="4"/>
@@ -304,7 +310,7 @@ dialog h2{margin:0 0 8px;font-size:20px}
     </div>
   </details>
 
-  <p class="hint">Space start or stop. Up and Down change tempo (Shift for 10). T taps tempo. S opens stage mode.</p>
+  <p class="hint">Swipe the pendulum to start. Space start or stop. Up and Down change tempo (Shift for 10). T taps tempo. S opens stage mode.</p>
 </main>
 
 <div class="stageview" id="stageView" role="dialog" aria-modal="true" aria-label="Stage mode">
@@ -317,6 +323,19 @@ dialog h2{margin:0 0 8px;font-size:20px}
     <button class="step" id="stPlus" type="button" aria-label="Faster by 1 BPM">+</button>
   </div>
 </div>
+
+<dialog id="sigDlg" aria-labelledby="sigTitle">
+  <h2 id="sigTitle">Time signature</h2>
+  <div class="sigpresets" id="sigPresets"></div>
+  <div class="grid2">
+    <label class="field">Beats per bar<select id="sigNum"></select></label>
+    <label class="field">Note value
+      <select id="sigDen"><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16">16</option></select>
+    </label>
+  </div>
+  <p class="help">The tempo counts the note in the bottom number.</p>
+  <button class="btn primary" id="sigDone" type="button" autofocus style="margin-top:12px">Done</button>
+</dialog>
 
 <dialog id="calDlg" aria-labelledby="calTitle">
   <h2 id="calTitle">Calibrate visual delay</h2>
@@ -430,7 +449,7 @@ dialog h2{margin:0 0 8px;font-size:20px}
       barInfo = $('barInfo'), trainInfo = $('trainInfo'),
       numSel = $('num'), denSel = $('den'), subSel = $('sub'), swingAmt = $('swingAmt'),
       polySel = $('poly'), soundSel = $('sound'), volEl = $('vol');
-  var stageView = $('stageView'), stBeat = $('stBeat'), stLine = $('stLine'), stGo = $('stGo');
+  var stageView = $('stageView'), stBeat = $('stBeat'), stLine = $('stLine'), stGo = $('stGo'), sigBadge = $('sigBadge');
   var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   var msgTimer = null;
@@ -475,6 +494,8 @@ dialog h2{margin:0 0 8px;font-size:20px}
     weight.setAttribute('y', (48 + (state.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM) * 130).toFixed(1));
     drawDial();
     stLine.textContent = state.bpm + ' BPM · ' + state.num + '/' + state.den;
+    sigBadge.textContent = state.num + '/' + state.den;
+    sigBadge.setAttribute('aria-label', 'Time signature ' + state.num + '/' + state.den + '. Press to change.');
     save();
   }
 
@@ -629,7 +650,7 @@ dialog h2{margin:0 0 8px;font-size:20px}
 
   /* ---------- scheduler ---------- */
   var nextTime = 0, beatIdx = 0, subIdx = 0, beatCount = 0, curSub = 1, curNum = 4, barNum = 0;
-  var barMuted = false, barCount = false;
+  var barMuted = false, barCount = false, sideBase = 0;
   var polyN = 0, polyIdx = 0, polyStart = 0, polyDur = 0, midiNext = 0;
   var queue = [], last = { time: 0, idx: 0, dur: 0.6, n: 0, lvl: 2, muted: false, count: false, bar: 0 }, raf = null;
 
@@ -717,7 +738,7 @@ dialog h2{margin:0 0 8px;font-size:20px}
       setAngle(0);
     } else {
       var frac = clamp((now - last.time) / last.dur, 0, 1);
-      var side = last.n % 2 === 0 ? 1 : -1;                    // the arm sits at an extreme on every click
+      var side = (last.n + sideBase) % 2 === 0 ? 1 : -1;       // the arm sits at an extreme on every click
       setAngle(22 * side * Math.cos(Math.PI * frac));
     }
     if (stageOpen) {
@@ -751,8 +772,9 @@ dialog h2{margin:0 0 8px;font-size:20px}
     go.classList.toggle('on', playing); stGo.classList.toggle('on', playing);
   }
 
-  function start() {
+  function start(swipeDir) {
     if (!ensureAudio()) return;
+    sideBase = swipeDir === -1 ? 1 : 0;      // a swipe to the left starts the first beat on the left
     playing = true;
     beatIdx = 0; subIdx = 0; beatCount = 0; queue = []; polyN = 0;
     curSub = state.sub; curNum = state.num;
@@ -851,13 +873,16 @@ dialog h2{margin:0 0 8px;font-size:20px}
     swingAmt.disabled = state.sub !== 2;
     $('swingHelp').hidden = state.sub === 2;
   }
-  numSel.addEventListener('change', function () {
-    state.num = +numSel.value;
+  function setMeter(num, den) {
+    state.num = clamp(num | 0, 1, 16); state.den = den;
     var acc = [];
     for (var i = 0; i < state.num; i++) acc.push(state.acc[i] !== undefined ? state.acc[i] : (i === 0 ? 2 : 1));
-    state.acc = acc; buildDots(); setBpm(state.bpm, true);
-  });
-  denSel.addEventListener('change', function () { state.den = +denSel.value; setBpm(state.bpm, true); });
+    state.acc = acc;
+    numSel.value = state.num; denSel.value = state.den;
+    buildDots(); setBpm(state.bpm, true);
+  }
+  numSel.addEventListener('change', function () { setMeter(+numSel.value, state.den); });
+  denSel.addEventListener('change', function () { setMeter(state.num, +denSel.value); });
   subSel.addEventListener('change', function () { state.sub = +subSel.value; refreshSwing(); save(); });
   swingAmt.addEventListener('input', function () { state.swing = +swingAmt.value; refreshSwing(); save(); });
   polySel.addEventListener('change', function () { state.poly = +polySel.value; save(); });
@@ -1001,11 +1026,59 @@ dialog h2{margin:0 0 8px;font-size:20px}
   $('stExit').addEventListener('click', closeStage);
   document.addEventListener('fullscreenchange', function () { if (!document.fullscreenElement && stageOpen) closeStage(); });
 
+  /* ---------- swipe the pendulum to start ---------- */
+  (function () {
+    var card = $('stageCard'), startX = 0, startY = 0, active = false, SWIPE = 40;
+    card.addEventListener('pointerdown', function (e) {
+      if (playing || e.target.closest('.sig-badge')) return;
+      active = true; startX = e.clientX; startY = e.clientY;
+      card.setPointerCapture(e.pointerId);
+    });
+    card.addEventListener('pointermove', function (e) {
+      if (active) setAngle(clamp((e.clientX - startX) * 0.55, -22, 22));   // the arm follows your finger
+    });
+    function end(e, cancelled) {
+      if (!active) return;
+      active = false;
+      var dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!cancelled && Math.abs(dx) >= SWIPE && Math.abs(dx) > Math.abs(dy) * 1.2) start(dx > 0 ? 1 : -1);
+      else setAngle(0);
+    }
+    card.addEventListener('pointerup', function (e) { end(e, false); });
+    card.addEventListener('pointercancel', function (e) { end(e, true); });
+  })();
+
+  /* ---------- time signature badge and dialog ---------- */
+  (function () {
+    var dlg = $('sigDlg'), sigNum = $('sigNum'), sigDen = $('sigDen'), box = $('sigPresets');
+    var COMMON = [[2, 4], [3, 4], [4, 4], [5, 4], [6, 8], [7, 8], [9, 8], [12, 8]], i, o;
+    for (i = 1; i <= 16; i++) { o = document.createElement('option'); o.value = i; o.textContent = i; sigNum.appendChild(o); }
+    COMMON.forEach(function (s) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn'; b.textContent = s[0] + '/' + s[1];
+      b.dataset.n = s[0]; b.dataset.d = s[1]; box.appendChild(b);
+    });
+    function refresh() {
+      sigNum.value = state.num; sigDen.value = state.den;
+      Array.prototype.forEach.call(box.children, function (b) {
+        b.setAttribute('aria-pressed', (+b.dataset.n === state.num && +b.dataset.d === state.den) ? 'true' : 'false');
+      });
+    }
+    sigBadge.addEventListener('click', function () { refresh(); if (dlg.showModal) dlg.showModal(); });
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      setMeter(+b.dataset.n, +b.dataset.d); dlg.close();
+    });
+    sigNum.addEventListener('change', function () { setMeter(+sigNum.value, state.den); refresh(); });
+    sigDen.addEventListener('change', function () { setMeter(state.num, +sigDen.value); refresh(); });
+    $('sigDone').addEventListener('click', function () { dlg.close(); });
+  })();
+
   /* ---------- keyboard ---------- */
   document.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'Escape' && stageOpen) { closeStage(); return; }
-    if (calDlg.open) return;
+    if (document.querySelector('dialog[open]')) return;
     var tag = (e.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'select' || tag === 'textarea';
     if (e.code === 'Space' && tag !== 'button' && !typing) { e.preventDefault(); toggle(); }
